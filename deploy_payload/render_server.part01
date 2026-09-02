@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import logging
+import os
+import re
+import sys
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+from render_ui import INDEX_HTML
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse
+from starlette.routing import Route
+
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from competition_ai.config import SETTINGS
+from competition_ai.knowledge import load_catalog, load_evidence
+from competition_ai.pipeline import CompetitionPipeline, render_evidence
+from competition_ai.benchmark import load_benchmark, score_answer
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+LOGGER = logging.getLogger("thaillm.render")
+
+catalog = load_catalog(ROOT)
+evidence = load_evidence(ROOT, catalog)
+_pipeline: CompetitionPipeline | None = None
+
+PROGRAM_LABELS = {
+    "AIT": "AIT — เทคโนโลยีปัญญาประดิษฐ์",
+    "DSBA": "DSBA — วิทยาการข้อมูลและการวิเคราะห์เชิงธุรกิจ",
+    "IT": "IT — เทคโนโลยีสารสนเทศ",
+    "IT_INTER": "IT Inter — เทคโนโลยีสารสนเทศทางธุรกิจ (นานาชาติ)",
+}
+
+# Lightweight in-memory abuse protection. This is intentionally simple:
+# Render Free runs a single small instance and the state can reset on restart.
+RATE_LIMIT_PER_MINUTE = max(
+    1, int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "30"))
+)
+BENCHMARK_COOLDOWN_SECONDS = max(
+    0, int(os.getenv("BENCHMARK_COOLDOWN_SECONDS", "60"))
+)
+_REQUESTS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+_LAST_BENCHMARK: dict[str, float] = {}
+
+
+def get_pipeline() -> CompetitionPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = CompetitionPipeline(SETTINGS, catalog, evidence)
+    return _pipeline
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit(request: Request, bucket: str, limit: int, window: int = 60):
+    now = time.monotonic()
+    key = (_client_ip(request), bucket)
+    q = _REQUESTS[key]
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        retry_after = max(1, int(window - (now - q[0])))
+        return JSONResponse(
+            {
+                "error": "Too many requests. Please retry shortly.",
+                "retryAfterSeconds": retry_after,
+            },
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    q.append(now)
+    return None
+
+
+def _public_error(exc: Exception) -> str:
+    text = str(exc).strip()
+    # Do not return giant upstream payloads or server internals to the browser.
+    if len(text) > 500:
+        text = text[:500] + "…"
+    return text or exc.__class__.__name__
+
+
+
+def _contains_thai(text: str) -> bool:
+    return bool(re.search(r"[\u0E00-\u0E7F]", text or ""))
+
+
+def _static_status_text(status: str, language: str) -> str | None:
+    lang = language.upper()
+    texts = {
+        "BLOCKED": {
+            "TH": (
+                "คำขอนี้พยายามเปลี่ยนหรือเปิดเผยคำสั่งภายในระบบ "
+                "จึงไม่ดำเนินการต่อ แต่สามารถถามข้อมูลหลักสูตรของคณะ"
+                "เทคโนโลยี
