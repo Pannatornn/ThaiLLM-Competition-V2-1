@@ -1,17 +1,18 @@
 @echo off
 cd /d "%~dp0"
 
-echo ===============================
+echo =====================================
 echo ThaiLLM Academic Intelligence
-echo Integrated WWWW UI + AI Backend
-echo ===============================
+ echo WWWW UI + ThaiLLM Backend
+echo =====================================
 
 if not exist .venv (
+  echo Creating Python environment...
   python -m venv .venv
 )
 
+.venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m pip install fastapi uvicorn
 
 if not exist .env (
   copy .env.example .env >nul
@@ -20,18 +21,10 @@ if not exist .env (
   pause
 )
 
-if exist frontend (
-  cd frontend
-  if not exist node_modules (
-    npm install
-  )
-  npm run build
-  cd ..
-)
-
 start "ThaiLLM API" cmd /k ".venv\Scripts\python.exe -m uvicorn api_server:app --host 0.0.0.0 --port 8000"
 
+timeout /t 4 >nul
 start http://localhost:8000
 
-echo Started.
+echo Application started.
 pause
