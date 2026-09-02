@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: thaillm-competition-v2-1
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements-render.txt
+    startCommand: uvicorn render_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: THAILLM_API_URL
+        value: https://thaillm.or.th/api/v1/chat/completions
+      - key: THAILLM_API_KEY
+        sync: false
+      - key: THAILLM_MODEL
+        value: openthaigpt
+      - key: THAILLM_TIMEOUT_SECONDS
+        value: "90"
+      - key: THAILLM_MAX_RETRIES
+        value: "1"
+      - key: THAILLM_MAX_TOKENS
+        value: "1600"
+      - key: THAILLM_TEMPERATURE
+        value: "0"
+      - key: STRICT_THAILLM_DOCUMENT_FLOW
+        value: "true"
+      - key: USE_THAILLM_QUERY_PLANNER
+        value: "true"
+      - key: USE_THAILLM_RERANK
+        value: "true"
+      - key: VERIFY_ANSWERS
+        value: "true"
+      - key: ENABLE_ANSWER_REPAIR
+        value: "true"
+      - key: ENABLE_CACHE
+        value: "true"
+      - key: DEBUG_MODE
+        value: "false"
+      - key: TOP_CANDIDATES
+        value: "16"
+      - key: FINAL_EVIDENCE_K
+        value: "6"
+      - key: CACHE_TTL_SECONDS
+        value: "86400"
+      - key: PUBLIC_RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: BENCHMARK_COOLDOWN_SECONDS
+        value: "60"
