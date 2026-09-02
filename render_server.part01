@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import logging
+import os
+import re
+import sys
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+from render_ui import INDEX_HTML
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse
+from starlette.routing import Route
+
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from competition_ai.config import SETTINGS
+from competition_ai.knowledge import load_catalog, load_evidence
+from competition_ai.pipeline import CompetitionPipeline, render_evidence
+from competition_ai.benchmark import load_benchmark, score_answer
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+LOGGER = logging.getLogger("thaillm.render")
+
+catalog = load_catalog(ROOT)
+evidence = load_evidence(ROOT, catalog)
+_pipeline: CompetitionPipeline | None = None
+
+PROGRAM_LABELS = {
+    "AIT": "AIT — เทคโนโลยีปัญญาประดิษฐ์",
+    "DSBA": "DSBA — วิทยาการข้อมูลและการวิเคราะห์เชิงธุรกิจ",
+    "IT": "IT — เทคโนโลยีสารสนเทศ",
+    "IT_INTER": "IT Inter — เทคโนโลยีสารสนเทศทางธุรกิจ (นานาชาติ)",
+}
+
+# Lightweight in-memory abuse protection. This is intentionally simple:
+# Render Free runs a single small instance and the state can reset on restart.
+RATE_LIMIT_PER_MINUTE = max(
+    1, int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "30"))
+)
+BENCHMARK_COOLDOWN_SECONDS = max(
+    0, int(os.getenv("BENCHMARK_COOLDOWN_SECONDS", "60"))
+)
+_REQUESTS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+_LAST_BENCHMARK: dict[str, float] = {}
+
+
+def get_pipeline() -> CompetitionPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = CompetitionPipeline(SETTINGS, catalog, evidence)
+    return _pipeline
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit(request: Request, bucket: str, limit: int, window: int = 60):
+    now = time.monotonic()
+    key = (_client_ip(request), bucket)
+    q = _REQUESTS[key]
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        retry_after = max(1, int(window - (now - q[0])))
+        return JSONResponse(
+            {
+                "error": "Too many requests. Please retry shortly.",
+                "retryAfterSeconds": retry_after,
+            },
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    q.append(now)
+    return None
+
+
+def _public_error(exc: Exception) -> str:
+    text = str(exc).strip()
+    # Do not return giant upstream payloads or server internals to the browser.
+    if len(text) > 500:
+        text = text[:500] + "…"
+    return text or exc.__class__.__name__
+
+
+
+def _contains_thai(text: str) -> bool:
+    return bool(re.search(r"[\u0E00-\u0E7F]", text or ""))
+
+
+def _static_status_text(status: str, language: str) -> str | None:
+    lang = language.upper()
+    texts = {
+        "BLOCKED": {
+            "TH": (
+                "คำขอนี้พยายามเปลี่ยนหรือเปิดเผยคำสั่งภายในระบบ "
+                "จึงไม่ดำเนินการต่อ แต่สามารถถามข้อมูลหลักสูตรของคณะ"
+                "เทคโนโลยีสารสนเทศ สจล. ได้"
+            ),
+            "EN": (
+                "This request attempts to override or reveal internal system "
+                "instructions, so it has been blocked. You can still ask about "
+                "the KMITL School of Information Technology curricula."
+            ),
+        },
+        "OUT_OF_SCOPE": {
+            "TH": (
+                "คำถามนี้อยู่นอกขอบเขตชุดข้อมูลที่ผู้จัดกำหนด "
+                "ระบบจึงไม่สร้างคำตอบจากความรู้ภายนอก"
+            ),
+            "EN": (
+                "This question is outside the organizer-provided curriculum "
+                "dataset, so the system will not answer using external knowledge."
+            ),
+        },
+        "NEEDS_CONTEXT": {
+            "TH": "กรุณาระบุ AIT, DSBA, IT หรือ IT Inter เพื่อป้องกันการตอบข้ามหลักสูตร",
+            "EN": "Please specify AIT, DSBA, IT, or IT Inter to avoid mixing evidence across programs.",
+        },
+        "EMPTY": {
+            "TH": "กรุณาพิมพ์คำถาม",
+            "EN": "Please enter a question.",
+        },
+        "NO_EVIDENCE": {
+            "TH": "ไม่พบหลักฐานที่เกี่ยวข้องในชุดข้อมูล",
+            "EN": "No relevant evidence was found in the supplied dataset.",
+        },
+    }
+    return texts.get(status, {}).get(lang)
+
+
+def _ensure_result_language(
+    pipe: CompetitionPipeline,
+    question: str,
+    result: Any,
+    language: str,
+) -> Any:
+    """
+    Keep security/routing/retrieval on the ORIGINAL question.
+    Only localize the final grounded answer when its language does not match
+    the user's TH/EN selection.
+    """
+    lang = language.upper()
+    static = _static_status_text(result.status, lang)
+    if static is not None:
+        result.answer = static
+        return result
+
+    if result.status in {"API_ERROR"} or not result.evidence:
+        return result
+
+    answer_is_thai = _contains_thai(result.answer)
+    desired_is_thai = lang == "TH"
+    if answer_is_thai == desired_is_thai:
+        return result
+
+    target = "Thai" if desired_is_thai else "English"
+    system = (
+        "You are a strict grounded translation and rewriting engine. "
+        f"Rewrite the supplied ANSWER in {target} only. "
+        "Do not add, remove, infer, or correct factual claims. "
+        "Preserve program codes, official course names where appropriate, "
+        "numbers, dates, credit counts, and [E#] citations. "
+        "Use EVIDENCE only to preserve factual fidelity. "
+        "Return only the rewritten answer. Do not show reasoning or <think>."
+    )
+    localized = pipe.llm.generate(
+        system,
+        f"QUESTION:\n{question}\n\n"
+        f"ANSWER:\n{result.answer}\n\n"
+        f"EVIDENCE:\n{render_evidence(result.evidence)}",
+    )
+
+    # Re-verify the localized version against the same evidence.
+    if pipe.s.verify_answers:
+        verification = pipe._verify(question, localized, result.evidence)
+        result.verification = verification
+        result.status = verification.status
+        if verification.statu
