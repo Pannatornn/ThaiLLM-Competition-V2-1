@@ -22,7 +22,7 @@ from competition_ai.benchmark import load_benchmark, score_answer
 from competition_ai.health import api_health
 
 DOCS_DIR = ROOT / "data" / "documents"
-FRONTEND_DIR = ROOT / "frontend"
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 catalog = load_catalog(ROOT)
 evidence = load_evidence(ROOT, catalog)
@@ -31,9 +31,15 @@ benchmark_spec = load_benchmark(ROOT)
 
 app = FastAPI(title="ThaiLLM Academic Intelligence API", version="2.1-integrated")
 
+# Useful when running Vite dev server; production frontend is same-origin on :8000.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,7 +54,7 @@ class AskRequest(BaseModel):
 class CompareRequest(BaseModel):
     left: str
     right: str
-    focus: str = "รายวิชาและทักษะ"
+    focus: str = Field(default="รายวิชาและทักษะ", min_length=1, max_length=2000)
 
 
 def _verification_payload(v: Any) -> dict[str, Any] | None:
@@ -121,6 +127,7 @@ def compare(req: CompareRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Unknown curriculum code")
     if req.left == req.right:
         raise HTTPException(status_code=400, detail="Choose two different programs")
+
     question = f"เปรียบเทียบ {req.left} กับ {req.right}: {req.focus}"
     return _result_payload(pipeline.compare(question, [req.left, req.right], req.focus))
 
@@ -129,22 +136,31 @@ def compare(req: CompareRequest) -> dict[str, Any]:
 def benchmark() -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     passed = 0
+
     for item in benchmark_spec["questions"]:
         result = pipeline.ask(item["question"])
         spec = benchmark_spec["gold"][str(item["id"])]
         ok, note = score_answer(item["id"], result, spec)
         passed += int(ok)
-        rows.append({
-            "id": item["id"],
-            "question": item["question"],
-            "type": item.get("type", ""),
-            "passed": ok,
-            "status": result.status,
-            "note": note,
-            "latency_ms": result.latency_ms,
-        })
+        rows.append(
+            {
+                "id": item["id"],
+                "question": item["question"],
+                "type": item.get("type", ""),
+                "passed": ok,
+                "status": result.status,
+                "note": note,
+                "latency_ms": result.latency_ms,
+            }
+        )
+
     total = len(rows)
-    return {"passed": passed, "total": total, "score": (passed / total) if total else 0.0, "rows": rows}
+    return {
+        "passed": passed,
+        "total": total,
+        "score": (passed / total) if total else 0.0,
+        "rows": rows,
+    }
 
 
 @app.get("/api/documents/{filename}")
@@ -156,15 +172,23 @@ def document(filename: str):
     return FileResponse(path, media_type="application/pdf")
 
 
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend-static")
+# Vite emits hashed JS/CSS here. Mount only when a production build exists.
+if (FRONTEND_DIST / "assets").exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIST / "assets"),
+        name="frontend-assets",
+    )
 
 
 @app.get("/")
 def frontend_root():
-    index = FRONTEND_DIR / "index.html"
+    index = FRONTEND_DIST / "index.html"
     if not index.exists():
-        raise HTTPException(status_code=503, detail="Frontend missing")
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend build missing. Run START_APP.bat or npm run build in frontend.",
+        )
     return FileResponse(index, media_type="text/html")
 
 
@@ -172,10 +196,13 @@ def frontend_root():
 def frontend_fallback(path: str):
     if path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
-    candidate = FRONTEND_DIR / path
+
+    candidate = FRONTEND_DIST / path
     if candidate.exists() and candidate.is_file():
         return FileResponse(candidate)
-    index = FRONTEND_DIR / "index.html"
+
+    index = FRONTEND_DIST / "index.html"
     if index.exists():
         return FileResponse(index, media_type="text/html")
-    raise HTTPException(status_code=404, detail="Frontend missing")
+
+    raise HTTPException(status_code=404, detail="Frontend build missing")
