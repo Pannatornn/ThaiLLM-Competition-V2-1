@@ -1,0 +1,223 @@
+{
+  "AIT": {
+    "display": "AIT — เทคโนโลยีปัญญาประดิษฐ์",
+    "file": "AIT.pdf",
+    "aliases": [
+      "AIT",
+      "เทคโนโลยีปัญญาประดิษฐ์",
+      "ปัญญาประดิษฐ์",
+      "Artificial Intelligence Technology",
+      "人工智能技术"
+    ],
+    "facts": [
+      {
+        "topic": "basic",
+        "page": 2,
+        "text": "หลักสูตร AIT มีจำนวนหน่วยกิตที่เรียนตลอดหลักสูตร 120 หน่วยกิต และเป็นหลักสูตรปริญญาตรี 4 ปี"
+      },
+      {
+        "topic": "opening",
+        "page": 4,
+        "text": "หลักสูตร AIT เป็นหลักสูตรใหม่ กำหนดเปิดสอนเดือนกรกฎาคม พ.ศ. 2566 ภาคการศึกษาที่ 1/2566"
+      },
+      {
+        "topic": "language",
+        "page": 3,
+        "text": "หลักสูตร AIT จัดการศึกษาเป็นภาษาไทยและภาษาอังกฤษ"
+      },
+      {
+        "topic": "structure",
+        "page": 12,
+        "text": "AIT มี 120 หน่วยกิต แบ่งเป็นหมวดศึกษาทั่วไป 24 หน่วยกิต หมวดวิชาเฉพาะ 90 หน่วยกิต และหมวดวิชาเลือกเสรี 6 หน่วยกิต"
+      },
+      {
+        "topic": "career",
+        "page": 4,
+        "text": "อาชีพหลังจบ AIT ได้แก่ นักวิทยาศาสตร์ด้านการเรียนรู้เชิงลึก นักวิทยาศาสตร์หรือวิศวกรข้อมูล ผู้พัฒนาระบบธุรกิจอัจฉริยะ วิศวกรการเรียนรู้ของเครื่อง นักวิจัยด้าน AI วิศวกรสถาปัตยกรรมข้อมูลขนาดใหญ่ ผู้เชี่ยวชาญ Computer Vision และ NLP เป็นต้น"
+      },
+      {
+        "topic": "courses",
+        "page": 14,
+        "text": "รายวิชาพื้นฐานด้าน AI ของ AIT ได้แก่ Probabilistic Machine Learning, Fundamentals of Deep Learning, Fundamentals of Data Science, Data Visualization, Introduction to Computer Vision, Introduction to Natural Language Processing, Network Analysis and Optimization, Neural Network Optimization, AI and Internet of Things และ Natural Language Processing with Deep Learning"
+      },
+      {
+        "topic": "courses",
+        "page": 15,
+        "text": "วิชาเลือกเฉพาะทาง AIT ได้แก่ Deep Learning for Computer Vision, Image Processing, Robot Localization and Mapping, Reinforcement Learning, Intelligent Recommendation Systems, Advanced Natural Language Processing, AI Ethics, AI Service Design, Logic and Knowledge Representation และ Generative Model"
+      },
+      {
+        "topic": "skills",
+        "page": 22,
+        "text": "ผลลัพธ์และการประเมินโครงงานของ AIT ครอบคลุมความรู้ด้านคณิตศาสตร์ สถิติ โครงสร้างข้อมูล การเขียนโปรแกรม ปัญญาประดิษฐ์และการเรียนรู้ของเครื่อง การจัดเก็บและประมวลผลข้อมูลขนาดใหญ่ NLP, Computer Vision, IoT และ Deep Learning รวมถึงทักษะการใช้เครื่องมือ การสื่อสาร และการทำงานเป็นทีม"
+      }
+    ]
+  },
+  "DSBA": {
+    "display": "DSBA — วิทยาการข้อมูลและการวิเคราะห์เชิงธุรกิจ",
+    "file": "DSBA.pdf",
+    "aliases": [
+      "DSBA",
+      "วิทยาการข้อมูลและการวิเคราะห์เชิงธุรกิจ",
+      "Data Science and Business Analytics",
+      "Data Science",
+      "数据科学"
+    ],
+    "facts": [
+      {
+        "topic": "basic",
+        "page": 2,
+        "text": "หลักสูตร DSBA มีจำนวนหน่วยกิตที่เรียนตลอดหลักสูตร 132 หน่วยกิต"
+      },
+      {
+        "topic": "duration",
+        "page": 3,
+        "text": "หลักสูตร DSBA เป็นหลักสูตรปริญญาตรี 4 ปี"
+      },
+      {
+        "topic": "opening",
+        "page": 3,
+        "text": "หลักสูตร DSBA เป็นหลักสูตรปรับปรุง กำหนดเปิดสอนเดือนสิงหาคม พ.ศ. 2565"
+      },
+      {
+        "topic": "tracks",
+        "page": 14,
+        "text": "DSBA มีกลุ่มวิชาชีพเฉพาะด้าน 3 กลุ่ม ได้แก่ กลุ่มวิทยาการข้อมูล กลุ่มการวิเคราะห์เชิงสถิติ และกลุ่มวิศวกรรมข้อมูล โดยเลือกเรียนกลุ่มใดกลุ่มหนึ่งรวม 12 หน่วยกิต"
+      },
+      {
+        "topic": "career",
+        "page": 3,
+        "text": "อาชีพหลังจบ DSBA ได้แก่ Data Scientist, Data Analyst, BI Specialist, BI Analyst, BI Developer, Business Insight Data Developer, Data Engineer, Data Warehouse Developer, Machine Learning Engineer และ Data Modeler"
+      },
+      {
+        "topic": "courses",
+        "page": 17,
+        "text": "รายวิชาพื้นฐานวิชาชีพของ DSBA ได้แก่ Data Analytics and Programming, NoSQL Database Systems, Fundamentals of Data Science, Data Visualization, Optimization, Applied Machine Learning, Data Warehousing และ Big Data Systems"
+      },
+      {
+        "topic": "courses",
+        "page": 18,
+        "text": "กลุ่มวิทยาการข้อมูลของ DSBA มีรายวิชา Artificial Intelligence, Machine Learning, Deep Learning, Natural Language Processing, Process Mining, Information Retrieval, Computer Vision และ Image Processing"
+      },
+      {
+        "topic": "courses",
+        "page": 19,
+        "text": "DSBA มีกลุ่มการวิเคราะห์เชิงสถิติ เช่น Time Series and Forecasting, Bayesian Statistics, Stochastic Process, Multivariate Data Analysis, Experimental Design และกลุ่มวิศวกรรมข้อมูล เช่น Data Pipeline Architecture, Intelligent System Development, Machine Learning Operations และ Cloud Technology Infrastructure"
+      },
+      {
+        "topic": "skills",
+        "page": 11,
+        "text": "ผลการเรียนรู้ตามชั้นปีของ DSBA ครอบคลุมพื้นฐานเทคโนโลยีสารสนเทศและการวิเคราะห์ข้อมูล การวิเคราะห์และสรุปปัญหาด้านวิทยาการข้อมูล การวิเคราะห์เชิงสถิติและวิศวกรรมข้อมูล การเลือกและประเมินอัลกอริทึม และการพัฒนาความเชี่ยวชาญเฉพาะทาง"
+      }
+    ]
+  },
+  "IT": {
+    "display": "IT — เทคโนโลยีสารสนเทศ",
+    "file": "IT2565.pdf",
+    "aliases": [
+      "IT",
+      "เทคโนโลยีสารสนเทศ",
+      "Information Technology"
+    ],
+    "facts": [
+      {
+        "topic": "basic",
+        "page": 2,
+        "text": "หลักสูตร IT มีจำนวนหน่วยกิตที่เรียนตลอดหลักสูตร 129 หน่วยกิต"
+      },
+      {
+        "topic": "duration",
+        "page": 3,
+        "text": "หลักสูตร IT เป็นหลักสูตรปริญญาตรี 4 ปี"
+      },
+      {
+        "topic": "opening",
+        "page": 3,
+        "text": "หลักสูตร IT เป็นหลักสูตรปรับปรุง กำหนดเปิดสอนเดือนสิงหาคม พ.ศ. 2565"
+      },
+      {
+        "topic": "tracks",
+        "page": 2,
+        "text": "IT มีความเชี่ยวชาญเฉพาะทาง 3 ด้าน ได้แก่ การพัฒนาซอฟต์แวร์ โครงสร้างพื้นฐานเทคโนโลยีสารสนเทศ และสื่อประสมสำหรับการพัฒนาสื่อเชิงโต้ตอบ เว็บ และเกม"
+      },
+      {
+        "topic": "structure",
+        "page": 15,
+        "text": "IT มี 129 หน่วยกิต แบ่งเป็นหมวดศึกษาทั่วไป 30 หน่วยกิต หมวดวิชาเฉพาะ 93 หน่วยกิต และหมวดวิชาเลือกเสรี 6 หน่วยกิต"
+      },
+      {
+        "topic": "courses",
+        "page": 20,
+        "text": "รายวิชาบังคับเฉพาะสาขาของ IT ครอบคลุมกลุ่มการพัฒนาซอฟต์แวร์ เช่น NoSQL Database Systems, Functional Programming, Requirement Engineering, Software Development Tools and Environments และ Server-side Web Development รวมถึงกลุ่มโครงสร้างพื้นฐานเทคโนโลยีสารสนเทศ เช่น Communication Network Infrastructure, Infrastructure Systems and Services, IT Infrastructure Security, Internet of Things และ Infrastructure Programmability and Automation"
+      },
+      {
+        "topic": "courses",
+        "page": 21,
+        "text": "รายวิชา IT ด้านสื่อประสม เว็บ และเกม ได้แก่ Human Interface Design, Visual Design Fundamentals for Interactive Media, Computer Graphics and Animation, Introduction to Game Design and Development และ Server-side Web Development"
+      },
+      {
+        "topic": "courses",
+        "page": 23,
+        "text": "วิชาเลือก IT มีรายวิชาที่เกี่ยวข้องกับ Artificial Intelligence, Introduction to Natural Language Processing, Advanced Database Systems, Software Quality Assurance, UX Tools, Customer Behavior Analysis และวิชาเทคโนโลยีอื่น ๆ"
+      },
+      {
+        "topic": "skills",
+        "page": 11,
+        "text": "ผลลัพธ์การเรียนรู้ของ IT ครอบคลุมความรู้พื้นฐานเทคโนโลยีสารสนเทศ การประยุกต์ใช้เพื่อแก้ปัญหา ความเชี่ยวชาญเฉพาะด้านซอฟต์แวร์ โครงสร้างพื้นฐาน หรือสื่อประสม การออกแบบและพัฒนาระบบ การใช้เครื่องมือที่จำเป็น การทำงานร่วมกับผู้อื่น การสื่อสาร และการเรียนรู้ด้วยตนเอง"
+      }
+    ]
+  },
+  "IT_INTER": {
+    "display": "IT Inter — เทคโนโลยีสารสนเทศทางธุรกิจ (นานาชาติ)",
+    "file": "IT_inter2565.pdf",
+    "aliases": [
+      "IT Inter",
+      "IT_inter",
+      "BIT",
+      "Business Information Technology",
+      "เทคโนโลยีสารสนเทศทางธุรกิจ",
+      "หลักสูตรนานาชาติ"
+    ],
+    "facts": [
+      {
+        "topic": "basic",
+        "page": 2,
+        "text": "หลักสูตร IT Inter หรือ Business Information Technology มีจำนวนหน่วยกิตที่เรียนตลอดหลักสูตร 126 หน่วยกิต และเป็นหลักสูตรปริญญาตรี 4 ปี"
+      },
+      {
+        "topic": "language",
+        "page": 2,
+        "text": "หลักสูตร IT Inter จัดการศึกษาเป็นภาษาอังกฤษ และรับนักศึกษาไทยและนักศึกษาต่างชาติ"
+      },
+      {
+        "topic": "opening",
+        "page": 3,
+        "text": "หลักสูตร IT Inter เป็นหลักสูตรปรับปรุง กำหนดเปิดสอนเดือนสิงหาคม พ.ศ. 2565"
+      },
+      {
+        "topic": "tracks",
+        "page": 15,
+        "text": "IT Inter มีกลุ่มวิชา 4 กลุ่ม ได้แก่ Business Analysis, Enterprise System/Business Process Improvement, Digital Marketing และ UX/UI"
+      },
+      {
+        "topic": "structure",
+        "page": 14,
+        "text": "IT Inter มี 126 หน่วยกิต แบ่งเป็นหมวดศึกษาทั่วไป 30 หน่วยกิต หมวดวิชาเฉพาะ 90 หน่วยกิต และหมวดวิชาเลือกเสรี 6 หน่วยกิต"
+      },
+      {
+        "topic": "courses",
+        "page": 18,
+        "text": "รายวิชา IT Inter ครอบคลุม Management and Organizations, Financial Accounting for Non-Accountants, Managing Business Information and Emerging Technologies, IT Project Management, Economics of IT, Business Processes and Business Model, ERP, Digital Technology for Business, Database System Concepts, Human Interface Design, Web Application Development Using Frameworks, Information System Security, Digital Marketing และ Business Intelligence and Big Data"
+      },
+      {
+        "topic": "courses",
+        "page": 19,
+        "text": "รายวิชา IT Inter ยังครอบคลุม Programming Fundamentals, Data Structures and Algorithms Principles, Business Information System Analysis and Design, Visual Communication for Business, Cloud Technology, Computer Network and Cybersecurity, Advanced Database Systems และ Machine Learning"
+      },
+      {
+        "topic": "skills",
+        "page": 11,
+        "text": "ผลการเรียนรู้ของ IT Inter เน้นความรู้และการประยุกต์เทคโนโลยีสารสนเทศทางธุรกิจ ทักษะภาษาอังกฤษ การทำงานในบริบทที่หลากหลาย ความสามารถด้านเทคโนโลยีสารสนเทศทางธุรกิจ การทำงานอย่างมีระบบและร่วมกับผู้อื่น ตลอดจนการเรียนรู้อาชีพอย่างต่อเนื่อง"
+      }
+    ]
+  }
+}

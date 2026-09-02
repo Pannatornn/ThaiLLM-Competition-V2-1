@@ -1,0 +1,7 @@
+{"timestamp": "2026-09-02T16:37:55", "event": "answer", "question": "AIT เรียนกี่หร่วยกิตและ มีวิชาอะไรบ้าง", "programs": ["AIT"], "status": "SUPPORTED", "latency_ms": 22476, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T17:02:45", "event": "answer", "question": "AIT เรียนกี่หน่วยกิต และกี่ปี?", "programs": ["AIT"], "status": "SUPPORTED", "latency_ms": 11244, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T17:03:12", "event": "answer", "question": "IT มีความเชี่ยวชาญเฉพาะทางอะไรบ้าง?", "programs": ["IT"], "status": "SUPPORTED", "latency_ms": 20202, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T17:54:22", "event": "answer", "question": "How many subject that AIT learned ?", "programs": ["AIT"], "status": "PARTIALLY_SUPPORTED", "latency_ms": 29725, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T17:57:07", "event": "answer", "question": "AIT เรียนกี่วิชา", "programs": ["AIT"], "status": "UNSUPPORTED", "latency_ms": 19478, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T18:33:54", "event": "answer", "question": "AIT เรียนกี่หน่วยกิต", "programs": ["AIT"], "status": "SUPPORTED", "latency_ms": 18825, "rerank_fallback": false, "repair_used": false}
+{"timestamp": "2026-09-02T19:12:51", "event": "answer", "question": "AIT เรียนกี่หน่วยกิต", "programs": ["AIT"], "status": "SUPPORTED", "latency_ms": 14810, "rerank_fallback": false, "repair_used": false}
