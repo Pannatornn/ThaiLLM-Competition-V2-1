@@ -2,20 +2,27 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import sys
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.competition_ai.config import SETTINGS
-from src.competition_ai.knowledge import load_catalog, load_evidence
-from src.competition_ai.pipeline import CompetitionPipeline
-from src.competition_ai.benchmark import load_benchmark, score_answer
-from src.competition_ai.health import api_health
-
 ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from competition_ai.config import SETTINGS
+from competition_ai.knowledge import load_catalog, load_evidence
+from competition_ai.pipeline import CompetitionPipeline
+from competition_ai.benchmark import load_benchmark, score_answer
+from competition_ai.health import api_health
+
 DOCS_DIR = ROOT / "data" / "documents"
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 catalog = load_catalog(ROOT)
 evidence = load_evidence(ROOT, catalog)
@@ -27,6 +34,7 @@ app = FastAPI(
     version="2.1-integrated",
 )
 
+# Development mode support (Vite on :5173). Production uses the same origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -161,4 +169,44 @@ def document(filename: str):
     path = DOCS_DIR / safe_name
     if not path.exists() or path.suffix.lower() != ".pdf":
         raise HTTPException(status_code=404, detail="Document not found")
-    return FileResponse(path, media_type="application/pdf", filename=safe_name)
+    # No attachment filename: browsers can open the official PDF inline.
+    return FileResponse(path, media_type="application/pdf")
+
+
+# Production frontend. START_APP.bat builds this directory before starting uvicorn.
+if (FRONTEND_DIST / "assets").exists():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIST / "assets"),
+        name="frontend-assets",
+    )
+
+
+@app.get("/")
+def frontend_root():
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(index, media_type="text/html")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Frontend has not been built. Run START_APP.bat first."
+        },
+    )
+
+
+@app.get("/{path:path}")
+def frontend_fallback(path: str):
+    # API mistakes should stay API errors, not become index.html.
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+
+    candidate = FRONTEND_DIST / path
+    if candidate.exists() and candidate.is_file():
+        return FileResponse(candidate)
+
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(index, media_type="text/html")
+
+    raise HTTPException(status_code=404, detail="Frontend has not been built")
