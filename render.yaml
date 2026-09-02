@@ -8,6 +8,8 @@ services:
     startCommand: uvicorn render_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.14"
       - key: THAILLM_API_URL
         value: https://thaillm.or.th/api/v1/chat/completions
       - key: THAILLM_API_KEY
