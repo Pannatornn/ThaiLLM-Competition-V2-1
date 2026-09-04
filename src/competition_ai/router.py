@@ -1,21 +1,117 @@
 from __future__ import annotations
+
 import json
 import re
+import unicodedata
 from pathlib import Path
+
 from .models import RouteResult
+
 
 def load_catalog(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
+
+def _norm(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text or "")
+    text = text.replace("\u200b", "").replace("\ufeff", "")
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _token_hit(question: str, token: str) -> bool:
+    q = _norm(question)
+    t = _norm(token)
+    return bool(
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(t)}(?![A-Za-z0-9_])",
+            q,
+            flags=re.I,
+        )
+    )
+
+
 def _alias_hit(question: str, alias: str) -> bool:
-    q = question.casefold()
-    a = alias.casefold()
+    q = _norm(question)
+    a = _norm(alias)
     if a in {"it", "ait", "dsba", "bit"}:
-        return bool(re.search(
-            rf"(?<![A-Za-z0-9_]){re.escape(a)}(?![A-Za-z0-9_])",
-            q
-        ))
+        return _token_hit(q, a)
     return a in q
+
+
+# Explicit program-code recognizers are intentionally checked before generic
+# aliases. This prevents a core competition case such as "หลักสูตร IT ปี 2565"
+# from ever falling through to NEEDS_CONTEXT.
+_EXPLICIT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "IT_INTER",
+        (
+            r"(?<![A-Za-z0-9_])it[\s_-]*(?:inter|international)(?![A-Za-z0-9_])",
+            r"(?<![A-Za-z0-9_])bit(?![A-Za-z0-9_])",
+            r"เทคโนโลยีสารสนเทศทางธุรกิจ",
+            r"business\s+information\s+technology",
+        ),
+    ),
+    (
+        "AIT",
+        (
+            r"(?<![A-Za-z0-9_])ait(?![A-Za-z0-9_])",
+            r"เทคโนโลยีปัญญาประดิษฐ์",
+            r"artificial\s+intelligence\s+technology",
+            r"人工智能技术",
+        ),
+    ),
+    (
+        "DSBA",
+        (
+            r"(?<![A-Za-z0-9_])dsba(?![A-Za-z0-9_])",
+            r"วิทยาการข้อมูลและการวิเคราะห์เชิงธุรกิจ",
+            r"data\s+science\s+and\s+business\s+analytics",
+            r"数据科学",
+        ),
+    ),
+    (
+        "IT",
+        (
+            r"(?<![A-Za-z0-9_])it(?![A-Za-z0-9_])",
+            r"หลักสูตร\s*it(?:\s|$)",
+            r"สาขาวิชาเทคโนโลยีสารสนเทศ",
+            r"bachelor\s+of\s+science\s+program\s+in\s+information\s+technology",
+        ),
+    ),
+)
+
+
+def detect_programs(question: str, catalog: dict) -> list[str]:
+    q = _norm(question)
+    hits: list[str] = []
+
+    for code, patterns in _EXPLICIT_PATTERNS:
+        if any(re.search(p, q, flags=re.I) for p in patterns):
+            hits.append(code)
+
+    # Catalog aliases cover official names and future aliases without requiring
+    # router code changes.
+    for code in ("IT_INTER", "AIT", "DSBA", "IT"):
+        if code in hits or code not in catalog:
+            continue
+        if any(_alias_hit(q, alias) for alias in catalog[code].get("aliases", [])):
+            hits.append(code)
+
+    # "IT Inter" contains the letters IT, but must route to IT_INTER only.
+    if "IT_INTER" in hits and "IT" in hits:
+        explicit_plain_it = bool(
+            re.search(r"(?<![A-Za-z0-9_])it(?![A-Za-z0-9_])", q)
+            and not re.search(
+                r"(?<![A-Za-z0-9_])it[\s_-]*(?:inter|international)(?![A-Za-z0-9_])",
+                q,
+            )
+        )
+        if not explicit_plain_it:
+            hits.remove("IT")
+
+    order = ["IT_INTER", "AIT", "DSBA", "IT"]
+    return [code for code in order if code in hits]
+
 
 def route_question(
     question: str,
@@ -26,37 +122,24 @@ def route_question(
     if forced_program and forced_program != "AUTO":
         return RouteResult(
             [forced_program],
-            reason="ผู้ใช้กำหนดบริบทหลักสูตร"
+            reason="ผู้ใช้กำหนดบริบทหลักสูตร",
         )
 
-    order = ["IT_INTER", "AIT", "DSBA", "IT"]
-    hits = []
-
-    for code in order:
-        if any(
-            _alias_hit(question, alias)
-            for alias in catalog[code]["aliases"]
-        ):
-            hits.append(code)
-
-    if "IT_INTER" in hits and "IT" in hits:
-        hits.remove("IT")
+    hits = detect_programs(question, catalog)
 
     comparison_words = [
         "เปรียบเทียบ", "ต่างกัน", "แตกต่าง", "เทียบ", "กับ",
         "มากกว่า", "น้อยกว่า", "หลักสูตรไหน", "which",
-        "vs", "versus"
+        "compare", "difference", "vs", "versus", "比较", "区别",
     ]
-    comparison = any(
-        w.casefold() in question.casefold()
-        for w in comparison_words
-    )
+    q = _norm(question)
+    comparison = any(w.casefold() in q for w in comparison_words)
 
     if hits:
         return RouteResult(
             programs=hits,
             comparison=(comparison or len(hits) > 1),
-            reason="ตรวจพบชื่อหรือ alias ของหลักสูตร"
+            reason="ตรวจพบชื่อ รหัส หรือ alias ของหลักสูตร",
         )
 
     available = available_programs or list(catalog.keys())
@@ -64,18 +147,18 @@ def route_question(
     if len(available) == 1:
         return RouteResult(
             available,
-            reason="มีหลักสูตรเดียวในบริบท"
+            reason="มีหลักสูตรเดียวในบริบท",
         )
 
     if comparison:
         return RouteResult(
             available,
             comparison=True,
-            reason="คำถามเปรียบเทียบโดยไม่ระบุชื่อหลักสูตร"
+            reason="คำถามเปรียบเทียบโดยไม่ระบุชื่อหลักสูตร",
         )
 
     return RouteResult(
         [],
         ambiguous=True,
-        reason="ไม่สามารถระบุหลักสูตรจากคำถามได้"
+        reason="ไม่สามารถระบุหลักสูตรจากคำถามได้",
     )
