@@ -74,3 +74,9 @@ THAILLM_API_KEY=YOUR_KEY
 - Compare มี dedicated prompt แยกจาก QA ปกติ
 - ช่องหัวข้อ Compare มี text area แบบแชท พร้อม preset
 - ถ้าข้อมูลมีอยู่ในหลักฐาน ระบบถูกสั่งห้ามตอบว่า “ไม่ระบุ”
+
+
+
+<img width="350" height="242" alt="image" src="https://github.com/user-attachments/assets/927d2d7d-d8b3-48bf-82ef-74bceed9abaf" />
+
+!!!!!!! ต้องเปลี่ยน API ตรงช่องเสมอนะครับ เนื่องจาก API ตัวเดิมที่ฝังไว้บน Render มันติดลิมิตไว ใช้ตัว OpenThaiGPT-ThaiLLM-8B-Instruct-v7.2 !!!!!!!!!!
