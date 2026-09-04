@@ -22,7 +22,9 @@ def test_hard_all_program_credit_ranking_is_deterministic_thai():
     assert "DSBA 96" in r.answer
     assert "IT 93" in r.answer
     assert "AIT 90" in r.answer
-    assert "IT_INTER 90" in r.answer or "IT International" in r.answer
+    assert "IT International 90" in r.answer
+    assert "AIT 90 หน่วยกิต = IT International 90 หน่วยกิต" in r.answer
+    assert "AIT 90 หน่วยกิต > IT International 90 หน่วยกิต" not in r.answer
     assert len(r.evidence) == 4
 
 
@@ -32,7 +34,7 @@ def test_hard_all_program_credit_ranking_is_deterministic_chinese():
     assert r is not None
     assert "DSBA 96 学分" in r.answer
     assert "IT 93 学分" in r.answer
-    assert "90 学分" in r.answer
+    assert "AIT 90 学分 = IT International 90 学分" in r.answer
 
 
 def test_hard_ait_dsba_compare_has_nonempty_grounded_fallback():
