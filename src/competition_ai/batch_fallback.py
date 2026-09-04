@@ -20,6 +20,13 @@ AI_DATA_COMPARE_PATTERNS = (
     r"人工智能.*数据|数据.*人工智能",
 )
 
+DISPLAY_CODES = {
+    "AIT": "AIT",
+    "DSBA": "DSBA",
+    "IT": "IT",
+    "IT_INTER": "IT International",
+}
+
 
 def is_structure_credit_ranking(question: str) -> bool:
     q = question or ""
@@ -61,6 +68,21 @@ def _specific_credits(text: str) -> int | None:
     return None
 
 
+def _ranking_expression(
+    ranked: list[tuple[str, int, Evidence]],
+    unit: str,
+) -> str:
+    """Use '=' inside ties and '>' only between strictly different values."""
+    grouped: list[tuple[int, list[str]]] = []
+    for code, credits, _ in ranked:
+        item = f"{DISPLAY_CODES.get(code, code)} {credits} {unit}"
+        if grouped and grouped[-1][0] == credits:
+            grouped[-1][1].append(item)
+        else:
+            grouped.append((credits, [item]))
+    return " > ".join(" = ".join(items) for _, items in grouped)
+
+
 def deterministic_structure_ranking(
     question: str,
     evidence: Iterable[Evidence],
@@ -93,25 +115,24 @@ def deterministic_structure_ranking(
     selected = [item[2] for item in ranked]
     lang = detect_language(question)
 
-    display = {
-        "AIT": "AIT",
-        "DSBA": "DSBA",
-        "IT": "IT",
-        "IT_INTER": "IT International",
-    }
-
     if lang == "zh":
-        answer = "按专业课程类学分从高到低排列：" + "，".join(
-            f"{display.get(code, code)} {credits} 学分" for code, credits, _ in ranked
-        ) + "。AIT 与 IT International 同为 90 学分，因此并列。"
+        answer = (
+            "按专业课程类学分从高到低排列："
+            + _ranking_expression(ranked, "学分")
+            + "。AIT 与 IT International 同为 90 学分，因此并列。"
+        )
     elif lang == "en":
-        answer = "Specific-course credits from highest to lowest: " + ", ".join(
-            f"{display.get(code, code)} {credits} credits" for code, credits, _ in ranked
-        ) + ". AIT and IT International are tied at 90 credits."
+        answer = (
+            "Specific-course credits from highest to lowest: "
+            + _ranking_expression(ranked, "credits")
+            + ". AIT and IT International are tied at 90 credits."
+        )
     else:
-        answer = "เรียงหมวดวิชาเฉพาะจากมากไปน้อย: " + " > ".join(
-            f"{display.get(code, code)} {credits} หน่วยกิต" for code, credits, _ in ranked
-        ) + " โดย AIT และ IT International มี 90 หน่วยกิตเท่ากัน จึงเป็นอันดับร่วม"
+        answer = (
+            "เรียงหมวดวิชาเฉพาะจากมากไปน้อย: "
+            + _ranking_expression(ranked, "หน่วยกิต")
+            + " โดย AIT และ IT International มี 90 หน่วยกิตเท่ากัน จึงเป็นอันดับร่วม"
+        )
 
     return AnswerResult(
         status="SUPPORTED",
