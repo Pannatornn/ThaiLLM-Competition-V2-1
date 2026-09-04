@@ -6,6 +6,7 @@ on:
       - main
       - final-competition-policy
       - hard-hackathon-10
+      - grading-feedback-fix
   pull_request:
     branches:
       - main
@@ -30,9 +31,13 @@ jobs:
           python -m py_compile \
             render_server.py \
             render_app.py \
+            render_app_v2.py \
             src/competition_ai/policy.py \
+            src/competition_ai/grading_policy.py \
             src/competition_ai/hard_policy.py \
+            src/competition_ai/batch_fallback.py \
             src/competition_ai/policy_pipeline.py \
+            src/competition_ai/resilient_pipeline.py \
             src/competition_ai/question_import.py \
             src/competition_ai/router.py \
             src/competition_ai/knowledge.py
