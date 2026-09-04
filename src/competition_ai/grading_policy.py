@@ -10,7 +10,7 @@ from .policy import PolicyDecision, detect_language
 # university should use the standard out-of-scope refusal rather than a
 # conversational redirect or a partial comparison answer.
 GREETING_PATTERNS = (
-    r"^\s*(สวัสดี|หวัดดี|ดีครับ|ดีค่ะ)(?:\s|$)",
+    r"^\s*(สวัสดี(?:ครับ|ค่ะ)?|หวัดดี(?:ครับ|ค่ะ)?|ดีครับ|ดีค่ะ)(?:\s|$)",
     r"^\s*(hello|hi|hey)(?:\s|$)",
     r"^\s*(你好|您好|哈喽)(?:\s|$)",
     r"^\s*good\s+(morning|afternoon|evening)(?:\s|$)",
