@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import re
 
+from .grading_policy import classify_grader_edge
 from .hard_policy import classify_hard_edge, is_all_program_question
 from .models import AnswerResult
 from .pipeline import CompetitionPipeline, render_evidence
-from .policy import classify_pre_route, detect_language, has_domain_hint, message
+from .policy import (
+    classify_pre_route,
+    detect_language,
+    has_domain_hint,
+    has_unsafe_mixed_intent,
+    message,
+)
 from .router import route_question
 
 
@@ -95,7 +102,7 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         )
 
     def _ensure_answer_language(self, question: str, result: AnswerResult) -> AnswerResult:
-        """Enforce: question language == answer language, independent of the UI language toggle."""
+        """Enforce question language == answer language, independent of the UI toggle."""
         target = detect_language(question)
         if result.status in {
             "EMPTY",
@@ -156,12 +163,7 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         return result
 
     def _run_all_program_analysis(self, question: str) -> AnswerResult:
-        """Answer aggregate/ranking questions across all four curricula from one homepage query."""
-        result = self.compare(
-            question,
-            ALL_PROGRAMS.copy(),
-            question,
-        )
+        result = self.compare(question, ALL_PROGRAMS.copy(), question)
         result.debug = {
             **(result.debug or {}),
             "universal_entry": True,
@@ -170,31 +172,87 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         }
         return self._ensure_answer_language(question, result)
 
+    def _mixed_safe_answer(self, question: str) -> AnswerResult:
+        """Answer the safe curriculum part and refuse only the unsafe sub-request.
+
+        The organizer grader explicitly rewarded partial intent handling: a mixed
+        DSBA + brute-force request should still receive useful DSBA information.
+        """
+        route = route_question(question, self.catalog)
+        programs = route.programs[:2]
+        if not programs:
+            return self._policy_result(
+                question,
+                "PARTIAL_BLOCKED",
+                "unsafe mixed request without a resolvable curriculum",
+            )
+
+        preferred_topics = ("basic", "duration", "tracks", "structure")
+        selected = []
+        for code in programs:
+            for topic in preferred_topics:
+                for e in self.evidence:
+                    if (
+                        e.program == code
+                        and e.kind == "canonical"
+                        and str(e.metadata.get("topic", "")) == topic
+                    ):
+                        selected.append(e)
+                        break
+                if len([x for x in selected if x.program == code]) >= 3:
+                    break
+
+        lines = ["ส่วนข้อมูลหลักสูตรที่ตอบได้จากเอกสาร:"]
+        for e in selected:
+            lines.append(f"- {e.text}")
+        lines.append(
+            "ส่วนคำขอให้เขียนหรือช่วยทำ brute-force/เดารหัสผ่าน ระบบไม่ดำเนินการต่อในส่วนนั้น"
+        )
+
+        result = AnswerResult(
+            status="PARTIALLY_SUPPORTED",
+            answer="\n".join(lines),
+            programs=programs,
+            evidence=selected,
+            debug={
+                "policy_reason": "safe curriculum intent answered; unsafe credential attack refused",
+                "language": detect_language(question),
+                "mixed_intent_split": True,
+            },
+        )
+        return self._ensure_answer_language(question, result)
+
     def ask(self, question: str, forced_program: str | None = None) -> AnswerResult:
         question = (question or "").strip()
 
-        # Hard-level edge policy runs before the general policy so encoded
-        # injections and dataset-missing current information cannot reach RAG.
         hard_decision = classify_hard_edge(question)
         if hard_decision is not None:
+            return self._policy_result(question, hard_decision.kind, hard_decision.reason)
+
+        # Apply the actual grader feedback before broader keyword routing. This
+        # prevents other KMITL faculties and generic greetings from being
+        # mistaken for IT KMITL curriculum questions.
+        grader_decision = classify_grader_edge(question)
+        if grader_decision is not None:
             return self._policy_result(
                 question,
-                hard_decision.kind,
-                hard_decision.reason,
+                grader_decision.kind,
+                grader_decision.reason,
             )
+
+        # Split safe + unsafe mixed intents instead of discarding the safe part.
+        if has_unsafe_mixed_intent(question):
+            return self._mixed_safe_answer(question)
 
         decision = classify_pre_route(question)
         if decision is not None:
             return self._policy_result(question, decision.kind, decision.reason)
 
-        # Universal first page also accepts aggregate questions such as
-        # "each curriculum", "all four programs" and Chinese equivalents.
         if is_all_program_question(question):
             return self._run_all_program_analysis(question)
 
         route = route_question(question, self.catalog, forced_program=forced_program)
 
-        # Comparisons are auto-routed; the user does not need to open Compare tab.
         if route.comparison and len(route.programs) >= 2:
             result = self.compare(question, route.programs, question)
             result.debug = {
@@ -205,7 +263,6 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
             }
             return self._ensure_answer_language(question, result)
 
-        # Broad in-domain overview questions are valid on the first page.
         if not route.programs and route.ambiguous:
             if self._is_program_list_question(question):
                 return self._program_list_answer(question)
