@@ -4,8 +4,9 @@ import re
 from dataclasses import dataclass
 
 try:
-    from langdetect import detect as _langdetect
-except Exception:  # pragma: no cover - deterministic fallback remains available
+    from langdetect import DetectorFactory, detect as _langdetect
+    DetectorFactory.seed = 0
+except Exception:  # pragma: no cover
     _langdetect = None
 
 
@@ -74,13 +75,7 @@ class PolicyDecision:
 
 
 def detect_language(text: str) -> str:
-    """Return an ISO-like language tag from the actual question text.
-
-    Deterministic script checks protect the competition's Thai/Chinese cases.
-    langdetect expands coverage to English, Japanese, Korean, Arabic, Russian,
-    Spanish, French and other languages so answer-language policy is not tied
-    to the TH/EN UI toggle.
-    """
+    """Return a stable ISO-like language tag from the actual question text."""
     text = (text or "").strip()
     if not text:
         return "th"
@@ -104,6 +99,18 @@ def detect_language(text: str) -> str:
         return "ar"
     if cyrillic >= 2 and _langdetect is None:
         return "ru"
+
+    # langdetect can misclassify short technical English as Catalan/Italian.
+    # Competition questions contain stable English interrogatives and domain
+    # words, so anchor them deterministically before statistical detection.
+    if re.search(
+        r"\b(how|what|which|who|when|where|why|does|do|is|are|can|could|would|"
+        r"many|credits?|programs?|curricula|curriculum|course|courses|require|"
+        r"compare|difference|hello|hi|system|prompt|documents?)\b",
+        text,
+        flags=re.I,
+    ):
+        return "en"
 
     if _langdetect is not None and len(text) >= 4:
         try:
