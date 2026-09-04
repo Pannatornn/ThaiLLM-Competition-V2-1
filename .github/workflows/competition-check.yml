@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - final-competition-policy
+      - hard-hackathon-10
   pull_request:
     branches:
       - main
@@ -30,8 +31,10 @@ jobs:
             render_server.py \
             render_app.py \
             src/competition_ai/policy.py \
+            src/competition_ai/hard_policy.py \
             src/competition_ai/policy_pipeline.py \
             src/competition_ai/question_import.py \
-            src/competition_ai/router.py
+            src/competition_ai/router.py \
+            src/competition_ai/knowledge.py
       - name: Run tests
         run: pytest -q
