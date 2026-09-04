@@ -18,22 +18,19 @@ from starlette.routing import Route
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from competition_ai.config import SETTINGS
+from competition_ai.config import SETTINGS, Settings
 from competition_ai.knowledge import load_catalog, load_evidence
-from competition_ai.pipeline import (
-    CompetitionPipeline,
-    balance_evidence_by_program,
-    render_evidence,
-)
-from competition_ai.retrieval import infer_topics, retrieve
+from competition_ai.pipeline import balance_evidence_by_program
+from competition_ai.policy import detect_language
+from competition_ai.policy_pipeline import PolicyCompetitionPipeline
+from competition_ai.question_import import decode_upload
+from competition_ai.retrieval import infer_topics
 from competition_ai.benchmark import load_benchmark, score_answer
-
 from render_ui import INDEX_HTML
 
 CATALOG = load_catalog(ROOT)
 EVIDENCE = load_evidence(ROOT, CATALOG)
-PIPE: CompetitionPipeline | None = None
-BENCH_PIPE: CompetitionPipeline | None = None
+MODEL_DISPLAY = "OpenThaiGPT-ThaiLLM-8B-Instruct-v7.2"
 
 LABELS = {
     "AIT": "AIT — เทคโนโลยีปัญญาประดิษฐ์",
@@ -49,30 +46,6 @@ BENCHMARK_CACHE: dict[str, Any] | None = None
 BENCHMARK_CACHE_AT = 0.0
 
 
-def pipe() -> CompetitionPipeline:
-    global PIPE
-    if PIPE is None:
-        PIPE = CompetitionPipeline(SETTINGS, CATALOG, EVIDENCE)
-    return PIPE
-
-
-def bench_pipe() -> CompetitionPipeline:
-    """Benchmark path: one ThaiLLM generation per curriculum case, no planner/rerank/verifier fan-out."""
-    global BENCH_PIPE
-    if BENCH_PIPE is None:
-        fast = replace(
-            SETTINGS,
-            use_query_planner=False,
-            use_rerank=False,
-            verify_answers=False,
-            answer_repair=False,
-            retries=0,
-            timeout=min(SETTINGS.timeout, 75),
-        )
-        BENCH_PIPE = CompetitionPipeline(fast, CATALOG, EVIDENCE)
-    return BENCH_PIPE
-
-
 def ip(req: Request) -> str:
     return (
         req.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -83,27 +56,18 @@ def ip(req: Request) -> str:
 def limited(req: Request, bucket: str, limit: int | None = None):
     now = time.monotonic()
     q = REQ[(ip(req), bucket)]
-    window = 60
-    while q and now - q[0] > window:
+    while q and now - q[0] > 60:
         q.popleft()
     allowed = limit or RATE
     if len(q) >= allowed:
-        retry = max(1, int(window - (now - q[0])))
+        retry = max(1, int(60 - (now - q[0])))
         return JSONResponse(
-            {
-                "error": "Too many requests. Please retry shortly.",
-                "type": "RATE_LIMIT",
-                "retryAfterSeconds": retry,
-            },
+            {"error": "Too many requests. Please retry shortly.", "type": "RATE_LIMIT", "retryAfterSeconds": retry},
             status_code=429,
             headers={"Retry-After": str(retry)},
         )
     q.append(now)
     return None
-
-
-def has_thai(s: str) -> bool:
-    return bool(re.search(r"[\u0E00-\u0E7F]", s or ""))
 
 
 def clean_error(exc: Exception | str) -> str:
@@ -114,72 +78,47 @@ def clean_error(exc: Exception | str) -> str:
 
 def transient_upstream(exc: Exception | str) -> bool:
     s = str(exc).casefold()
-    return any(
-        x in s
-        for x in (
-            "http 502",
-            "http 503",
-            "http 504",
-            "bad gateway",
-            "service unavailable",
-            "gateway timeout",
-            "timed out",
-            "timeout",
-            "connection reset",
-            "remote disconnected",
+    return any(x in s for x in (
+        "http 502", "http 503", "http 504", "bad gateway", "service unavailable",
+        "gateway timeout", "timed out", "timeout", "connection reset", "remote disconnected",
+    ))
+
+
+def request_settings(req: Request, *, fast: bool = False) -> Settings:
+    # A browser-supplied key is request-scoped. It is never written to disk,
+    # logs, GitHub, or environment variables. If absent, Render's secret is used.
+    supplied = req.headers.get("x-thaillm-api-key", "").strip()
+    base = replace(SETTINGS, api_key=(supplied or SETTINGS.api_key))
+    if fast:
+        return replace(
+            base,
+            use_query_planner=False,
+            use_rerank=False,
+            verify_answers=False,
+            answer_repair=False,
+            retries=0,
+            timeout=min(base.timeout, 75),
         )
-    )
+    return base
 
 
-def localize(p: CompetitionPipeline, question: str, result: Any, lang: str):
-    lang = lang.upper()
-    static = {
-        "BLOCKED": {
-            "TH": "คำขอนี้พยายามเปลี่ยนหรือเปิดเผยคำสั่งภายในระบบ จึงถูกบล็อก",
-            "EN": "This request attempts to override or reveal internal instructions, so it was blocked.",
-        },
-        "OUT_OF_SCOPE": {
-            "TH": "คำถามนี้อยู่นอกขอบเขตชุดข้อมูลที่ผู้จัดกำหนด",
-            "EN": "This question is outside the organizer-provided curriculum dataset.",
-        },
-        "NEEDS_CONTEXT": {
-            "TH": "กรุณาระบุ AIT, DSBA, IT หรือ IT Inter",
-            "EN": "Please specify AIT, DSBA, IT, or IT Inter.",
-        },
-        "EMPTY": {"TH": "กรุณาพิมพ์คำถาม", "EN": "Please enter a question."},
-    }
-    if result.status in static:
-        result.answer = static[result.status][lang]
-        return result
-    if not result.evidence or result.status == "API_ERROR":
-        return result
-    if has_thai(result.answer) == (lang == "TH"):
-        return result
-
-    target = "Thai" if lang == "TH" else "English"
-    try:
-        result.answer = p.llm.generate(
-            (
-                f"Rewrite ANSWER in {target} only. Preserve every fact, number, "
-                "course name and [E#] citation. Do not add facts. Return only "
-                "the rewritten answer."
-            ),
-            (
-                f"QUESTION:\n{question}\n\nANSWER:\n{result.answer}\n\n"
-                f"EVIDENCE:\n{render_evidence(result.evidence)}"
-            ),
-        )
-    except Exception:
-        pass
-    return result
+def pipe(req: Request, *, fast: bool = False) -> PolicyCompetitionPipeline:
+    return PolicyCompetitionPipeline(request_settings(req, fast=fast), CATALOG, EVIDENCE)
 
 
-def response(question: str, result: Any) -> dict[str, Any]:
-    conf = (
-        float(result.verification.confidence)
-        if result.verification
-        else (1.0 if result.status in {"BLOCKED", "OUT_OF_SCOPE"} else 0.0)
-    )
+def confidence_of(result: Any) -> float:
+    if getattr(result, "verification", None):
+        try:
+            return max(0.0, min(1.0, float(result.verification.confidence)))
+        except Exception:
+            pass
+    if result.status in {"BLOCKED", "OUT_OF_SCOPE", "GREETING", "NOT_FOUND", "PARTIAL_BLOCKED"}:
+        return 1.0
+    return 1.0 if getattr(result, "evidence", None) and result.status == "SUPPORTED" else 0.0
+
+
+def response_payload(question: str, result: Any) -> dict[str, Any]:
+    conf = confidence_of(result)
     evs = [
         {
             "id": e.id,
@@ -192,37 +131,43 @@ def response(question: str, result: Any) -> dict[str, Any]:
             "quoteEn": e.text,
             "confidence": conf,
         }
-        for e in result.evidence
+        for e in getattr(result, "evidence", [])
     ]
-    points = list(result.verification.supported_claims)[:4] if result.verification else []
+    points = []
+    if getattr(result, "verification", None):
+        points = list(result.verification.supported_claims)[:4]
     if not points:
         points = [
             re.sub(r"^[\-•*\d.\s]+", "", x).strip()
             for x in (result.answer or "").splitlines()
             if len(x.strip()) > 12
         ][:4]
+
+    detected_language = (getattr(result, "debug", {}) or {}).get("language") or detect_language(question)
     return {
         "question": question,
-        "status": result.status,
+        "answer": result.answer,
         "answerTh": result.answer,
         "answerEn": result.answer,
+        "language": detected_language,
+        "status": result.status,
         "programDetected": (
             " / ".join(LABELS.get(x, x) for x in result.programs)
-            if result.programs
-            else None
+            if getattr(result, "programs", None) else None
         ),
-        "confidence": max(0.0, min(1.0, conf)),
-        "supportedByEvidence": bool(result.evidence)
+        "confidence": conf,
+        "supportedByEvidence": bool(getattr(result, "evidence", []))
         and result.status in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CHECK_REQUIRED"},
         "securityVerdict": (
-            "PROMPT_INJECTION_BLOCKED"
-            if result.status == "BLOCKED"
+            "PROMPT_INJECTION_BLOCKED" if result.status == "BLOCKED"
             else ("OUT_OF_SCOPE" if result.status == "OUT_OF_SCOPE" else "CLEAN")
         ),
         "summaryKeyPoints": points,
         "evidenceList": evs,
-        "latencyMs": int(result.latency_ms or 0),
+        "latencyMs": int(getattr(result, "latency_ms", 0) or 0),
         "cacheHit": bool(getattr(result, "cache_hit", False)),
+        "model": SETTINGS.model,
+        "modelDisplay": MODEL_DISPLAY,
     }
 
 
@@ -238,12 +183,12 @@ def matrix(left: str, right: str, focus: str):
     q = focus.casefold()
     specs = [("ภาพรวมหลักสูตร", ["basic", "duration"])]
     checks = [
-        (("หน่วยกิต", "โครงสร้าง", "credit", "structure"), "โครงสร้าง/หน่วยกิต", ["structure", "basic"]),
-        (("สาย", "กลุ่ม", "track", "เฉพาะ"), "กลุ่มวิชา/ความเชี่ยวชาญ", ["tracks"]),
-        (("วิชา", "course", "ai", "machine", "deep", "nlp"), "รายวิชาสำคัญ", ["courses"]),
-        (("ทักษะ", "skill"), "ทักษะและผลลัพธ์การเรียนรู้", ["skills"]),
-        (("อาชีพ", "career", "งาน"), "แนวทางอาชีพ", ["career"]),
-        (("ภาษา", "language", "english"), "ภาษาที่ใช้ในการเรียน", ["language"]),
+        (("หน่วยกิต", "โครงสร้าง", "credit", "structure", "学分"), "โครงสร้าง/หน่วยกิต", ["structure", "basic"]),
+        (("สาย", "กลุ่ม", "track", "เฉพาะ", "专业方向"), "กลุ่มวิชา/ความเชี่ยวชาญ", ["tracks"]),
+        (("วิชา", "course", "ai", "machine", "deep", "nlp", "课程"), "รายวิชาสำคัญ", ["courses"]),
+        (("ทักษะ", "skill", "技能"), "ทักษะและผลลัพธ์การเรียนรู้", ["skills"]),
+        (("อาชีพ", "career", "งาน", "职业"), "แนวทางอาชีพ", ["career"]),
+        (("ภาษา", "language", "english", "语言"), "ภาษาที่ใช้ในการเรียน", ["language"]),
     ]
     for words, label, topics in checks:
         if any(w in q for w in words):
@@ -268,11 +213,9 @@ def matrix(left: str, right: str, focus: str):
                     if len(out) >= 2:
                         return out
             return out
-
         a, b = items(left), items(right)
         if a or b:
             rows.append({"label": label, "left": a, "right": b})
-
     return {
         "left": {"code": left, "display": CATALOG[left].get("display", left)},
         "right": {"code": right, "display": CATALOG[right].get("display", right)},
@@ -282,23 +225,15 @@ def matrix(left: str, right: str, focus: str):
 
 
 def fallback_evidence(programs: list[str], focus: str, limit: int = 8):
-    topics = infer_topics(focus)
-    if not topics:
-        topics = {"basic", "structure", "tracks", "courses", "skills", "career"}
-
-    selected = []
-    seen = set()
+    topics = infer_topics(focus) or {"basic", "structure", "tracks", "courses", "skills", "career"}
+    selected, seen = [], set()
     for code in programs:
         for e in EVIDENCE:
             if e.program != code or e.kind != "canonical":
                 continue
             topic = str(e.metadata.get("topic", "")).casefold()
             if topic in topics or topic == "basic":
-                if e.id not in seen:
-                    selected.append(e)
-                    seen.add(e.id)
-                    break
-
+                selected.append(e); seen.add(e.id); break
     for e in EVIDENCE:
         if len(selected) >= limit:
             break
@@ -306,62 +241,42 @@ def fallback_evidence(programs: list[str], focus: str, limit: int = 8):
             continue
         topic = str(e.metadata.get("topic", "")).casefold()
         if topic in topics or topic in {"basic", "structure"}:
-            selected.append(e)
-            seen.add(e.id)
+            selected.append(e); seen.add(e.id)
     return selected[:limit]
 
 
 def evidence_payload(items: list[Any], confidence: float = 1.0):
     return [
         {
-            "id": e.id,
-            "sourceDoc": e.source,
+            "id": e.id, "sourceDoc": e.source,
             "sourceDocTitle": LABELS.get(e.program, e.program),
             "page": f"หน้า {e.page}" if e.page else "ไม่ระบุหน้า",
-            "pageNumber": int(e.page or 0),
-            "programCode": e.program,
-            "quoteTh": e.text,
-            "quoteEn": e.text,
-            "confidence": confidence,
+            "pageNumber": int(e.page or 0), "programCode": e.program,
+            "quoteTh": e.text, "quoteEn": e.text, "confidence": confidence,
         }
         for e in items
     ]
 
 
-def fallback_compare_payload(left: str, right: str, focus: str, lang: str, exc: Exception | str):
+def fallback_compare_payload(left: str, right: str, focus: str, language: str, exc: Exception | str):
     sc = matrix(left, right, focus)
     ev = fallback_evidence([left, right], focus)
-    if lang == "EN":
-        answer = (
-            "ThaiLLM is temporarily unavailable, so the comparison table below is being "
-            "shown directly from canonical curriculum facts. No external facts were added."
-        )
-    else:
-        answer = (
-            "ThaiLLM ตอบกลับไม่สำเร็จชั่วคราว ระบบจึงแสดงตารางเปรียบเทียบจาก canonical facts "
-            "ของหลักสูตรโดยตรง โดยไม่เติมข้อมูลภายนอก"
-        )
+    texts = {
+        "zh": "ThaiLLM 暂时无法响应，因此下方比较表直接显示课程 canonical facts，不添加外部信息。",
+        "en": "ThaiLLM is temporarily unavailable, so the comparison table below is shown directly from canonical curriculum facts. No external facts were added.",
+        "th": "ThaiLLM ตอบกลับไม่สำเร็จชั่วคราว ระบบจึงแสดงตารางเปรียบเทียบจาก canonical facts ของหลักสูตรโดยตรง โดยไม่เติมข้อมูลภายนอก",
+    }
+    answer = texts.get(language, texts["en"])
     return {
-        "question": f"compare {left} {right}",
-        "status": "DEGRADED_CANONICAL",
-        "answerTh": answer,
-        "answerEn": answer,
-        "programDetected": f"{LABELS[left]} / {LABELS[right]}",
-        "confidence": 1.0,
-        "supportedByEvidence": bool(ev),
-        "securityVerdict": "CLEAN",
-        "summaryKeyPoints": [answer],
-        "evidenceList": evidence_payload(ev),
-        "latencyMs": 0,
-        "cacheHit": False,
-        "left": left,
-        "right": right,
-        "focus": focus,
-        "language": lang,
-        "structuredComparison": sc,
-        "degraded": True,
-        "degradedReason": "ThaiLLM upstream temporarily unavailable",
-        "upstreamError": clean_error(exc),
+        "question": f"compare {left} {right}", "answer": answer,
+        "answerTh": answer, "answerEn": answer, "language": language,
+        "status": "DEGRADED_CANONICAL", "programDetected": f"{LABELS[left]} / {LABELS[right]}",
+        "confidence": 1.0, "supportedByEvidence": bool(ev), "securityVerdict": "CLEAN",
+        "summaryKeyPoints": [answer], "evidenceList": evidence_payload(ev),
+        "latencyMs": 0, "cacheHit": False, "left": left, "right": right,
+        "focus": focus, "structuredComparison": sc, "degraded": True,
+        "degradedReason": "ThaiLLM upstream temporarily unavailable", "upstreamError": clean_error(exc),
+        "modelDisplay": MODEL_DISPLAY,
     }
 
 
@@ -370,8 +285,7 @@ async def root(_: Request):
         INDEX_HTML,
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "X-Content-Type-Options": "nosniff",
+            "Pragma": "no-cache", "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -384,42 +298,32 @@ async def healthz(_: Request):
     return JSONResponse({"ok": True, "programs": len(CATALOG), "evidenceUnits": len(EVIDENCE)})
 
 
-async def api_health(_: Request):
+async def api_health(req: Request):
+    s = request_settings(req)
     ok = False
     detail = "THAILLM_API_KEY is not configured"
-    if SETTINGS.api_key:
+    if s.api_key:
         try:
             r = requests.get(
                 "https://thaillm.or.th/api/v1/models",
-                headers={"Authorization": "Bearer " + SETTINGS.api_key},
-                timeout=12,
+                headers={"Authorization": "Bearer " + s.api_key}, timeout=12,
             )
             ok = r.status_code == 200
             detail = "ThaiLLM API ready" if ok else f"HTTP {r.status_code}"
         except Exception as e:
             detail = clean_error(e)
-    return JSONResponse(
-        {
-            "status": "online" if ok else "degraded",
-            "apiConnected": ok,
-            "detail": detail,
-            "model": SETTINGS.model,
-            "programs": len(CATALOG),
-            "evidenceUnits": len(EVIDENCE),
-        }
-    )
+    return JSONResponse({
+        "status": "online" if ok else "degraded", "apiConnected": ok, "detail": detail,
+        "model": s.model, "modelDisplay": MODEL_DISPLAY, "programs": len(CATALOG),
+        "evidenceUnits": len(EVIDENCE), "customKey": bool(req.headers.get("x-thaillm-api-key", "").strip()),
+    })
 
 
 async def api_programs(_: Request):
-    return JSONResponse(
-        {
-            "programs": [
-                {"code": c, "display": CATALOG[c].get("display", c)}
-                for c in ["AIT", "DSBA", "IT", "IT_INTER"]
-                if c in CATALOG
-            ]
-        }
-    )
+    return JSONResponse({"programs": [
+        {"code": c, "display": CATALOG[c].get("display", c)}
+        for c in ["AIT", "DSBA", "IT", "IT_INTER"] if c in CATALOG
+    ]})
 
 
 async def api_ask(req: Request):
@@ -428,27 +332,19 @@ async def api_ask(req: Request):
     try:
         b = await req.json()
         q = str(b.get("question", "")).strip()
-        lang = str(b.get("language", "TH")).upper()
         if not q:
             return JSONResponse({"error": "question is required"}, status_code=400)
         forced = b.get("program")
         forced = forced if forced in {"AIT", "DSBA", "IT", "IT_INTER"} else None
-        p = pipe()
-        r = p.ask(q, forced_program=forced)
-        r = localize(p, q, r, "EN" if lang == "EN" else "TH")
-        out = response(q, r)
-        out["language"] = lang
+        r = pipe(req).ask(q, forced_program=forced)
+        out = response_payload(q, r)
         if r.status == "API_ERROR":
             out["degraded"] = True
             out["degradedReason"] = "ThaiLLM upstream temporarily unavailable"
         return JSONResponse(out)
     except Exception as e:
         return JSONResponse(
-            {
-                "error": "ระบบวิเคราะห์คำถามขัดข้องชั่วคราว",
-                "detail": clean_error(e),
-                "type": e.__class__.__name__,
-            },
+            {"error": "ระบบวิเคราะห์คำถามขัดข้องชั่วคราว", "detail": clean_error(e), "type": e.__class__.__name__},
             status_code=503 if transient_upstream(e) else 500,
         )
 
@@ -459,54 +355,83 @@ async def api_compare(req: Request):
     b: dict[str, Any] = {}
     try:
         b = await req.json()
-        left = str(b.get("left", ""))
-        right = str(b.get("right", ""))
+        left, right = str(b.get("left", "")), str(b.get("right", ""))
         focus = str(b.get("focus", "")).strip()
-        lang = str(b.get("language", "TH")).upper()
+        ui_lang = str(b.get("language", "TH")).upper()
         if left not in LABELS or right not in LABELS or left == right:
             return JSONResponse({"error": "select two different valid programs"}, status_code=400)
         if not focus:
-            focus = (
-                "program overview, courses, skills, and careers"
-                if lang == "EN"
-                else "ภาพรวมหลักสูตร รายวิชา ทักษะ และอาชีพ"
-            )
-        q = (
-            f"Compare {left} and {right}: {focus}"
-            if lang == "EN"
-            else f"เปรียบเทียบ {left} กับ {right}: {focus}"
-        )
-
+            focus = "program overview, courses, skills, and careers" if ui_lang == "EN" else "ภาพรวมหลักสูตร รายวิชา ทักษะ และอาชีพ"
+        language = detect_language(focus)
+        q = f"{focus}\nPrograms: {left} vs {right}"
         sc = matrix(left, right, focus)
         try:
-            p = pipe()
+            p = pipe(req)
             r = p.compare(q, [left, right], focus)
-            r = localize(p, q, r, "EN" if lang == "EN" else "TH")
-            out = response(q, r)
-            out.update(
-                {
-                    "left": left,
-                    "right": right,
-                    "focus": focus,
-                    "language": lang,
-                    "structuredComparison": sc,
-                    "degraded": False,
-                }
-            )
+            r = p._ensure_answer_language(q, r)
+            out = response_payload(q, r)
+            out.update({"left": left, "right": right, "focus": focus, "language": language, "structuredComparison": sc, "degraded": False})
             return JSONResponse(out)
         except Exception as upstream:
-            return JSONResponse(fallback_compare_payload(left, right, focus, lang, upstream))
+            return JSONResponse(fallback_compare_payload(left, right, focus, language, upstream))
     except Exception as e:
-        left = str(b.get("left", ""))
-        right = str(b.get("right", ""))
-        focus = str(b.get("focus", "")).strip() or "ภาพรวมหลักสูตร"
-        lang = str(b.get("language", "TH")).upper()
-        if left in LABELS and right in LABELS and left != right:
-            return JSONResponse(fallback_compare_payload(left, right, focus, lang, e))
-        return JSONResponse(
-            {"error": "ไม่สามารถสร้าง Comparison Report ได้", "detail": clean_error(e)},
-            status_code=500,
-        )
+        return JSONResponse({"error": "ไม่สามารถสร้าง Comparison Report ได้", "detail": clean_error(e)}, status_code=500)
+
+
+async def api_import_questions(req: Request):
+    if x := limited(req, "import", limit=max(5, RATE)):
+        return x
+    try:
+        b = await req.json()
+        imported = decode_upload(str(b.get("filename", "")), str(b.get("contentBase64", "")))
+        return JSONResponse({
+            "filename": imported.filename, "sheet": imported.sheet, "header": imported.header,
+            "count": len(imported.questions), "questions": imported.questions,
+            "rowNumbers": imported.row_numbers,
+        })
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": "อ่านไฟล์คำถามไม่สำเร็จ", "detail": clean_error(e)}, status_code=500)
+
+
+async def api_run_batch(req: Request):
+    if x := limited(req, "batch", limit=max(2, RATE // 4)):
+        return x
+    try:
+        b = await req.json()
+        questions = [str(q).strip() for q in b.get("questions", []) if str(q).strip()]
+        if not questions:
+            return JSONResponse({"error": "questions is required"}, status_code=400)
+        if len(questions) > 100:
+            return JSONResponse({"error": "server batch is limited to 100 questions; use the first-page client runner for larger files"}, status_code=400)
+
+        p = pipe(req)
+        rows = []
+        started = time.perf_counter()
+        for idx, q in enumerate(questions, 1):
+            t0 = time.perf_counter()
+            try:
+                r = p.ask(q)
+                payload = response_payload(q, r)
+                rows.append({
+                    "id": idx, "question": q, "answer": r.answer, "status": r.status,
+                    "language": payload["language"], "confidence": payload["confidence"],
+                    "program": payload["programDetected"] or "",
+                    "latencyMs": int(r.latency_ms or ((time.perf_counter() - t0) * 1000)),
+                })
+            except Exception as one:
+                rows.append({
+                    "id": idx, "question": q, "answer": "", "status": "ERROR",
+                    "language": detect_language(q), "confidence": 0.0, "program": "",
+                    "latencyMs": int((time.perf_counter() - t0) * 1000), "error": clean_error(one),
+                })
+        return JSONResponse({
+            "total": len(rows), "rows": rows,
+            "latencyMs": int((time.perf_counter() - started) * 1000), "modelDisplay": MODEL_DISPLAY,
+        })
+    except Exception as e:
+        return JSONResponse({"error": "batch runner failed", "detail": clean_error(e)}, status_code=500)
 
 
 async def api_benchmark(req: Request):
@@ -514,8 +439,10 @@ async def api_benchmark(req: Request):
     if x := limited(req, "benchmark", limit=max(2, RATE // 3)):
         return x
 
+    # Do not share cache across custom API keys; only default Render-key runs are cached.
+    custom_key = bool(req.headers.get("x-thaillm-api-key", "").strip())
     now = time.monotonic()
-    if BENCHMARK_CACHE is not None and now - BENCHMARK_CACHE_AT < BENCHMARK_COOLDOWN:
+    if not custom_key and BENCHMARK_CACHE is not None and now - BENCHMARK_CACHE_AT < BENCHMARK_COOLDOWN:
         cached = dict(BENCHMARK_CACHE)
         cached["cacheHit"] = True
         cached["cacheAgeSeconds"] = int(now - BENCHMARK_CACHE_AT)
@@ -523,112 +450,68 @@ async def api_benchmark(req: Request):
 
     try:
         bench = load_benchmark(ROOT)
-        try:
-            p = bench_pipe()
-        except Exception:
-            p = None
-
+        p = pipe(req, fast=True)
         rows = []
-        passed = sec_t = sec_p = scope_t = scope_p = ground_t = ground_e = 0
-        errors = 0
+        passed = sec_t = sec_p = scope_t = scope_p = ground_t = ground_e = errors = 0
 
         for item in bench["questions"]:
             spec = bench["gold"][str(item["id"])]
             kind = spec["kind"]
             started = time.perf_counter()
             try:
-                if p is None:
-                    raise RuntimeError("ThaiLLM pipeline is unavailable")
                 r = p.ask(item["question"])
                 good, note = score_answer(item["id"], r, spec)
-                if r.status == "API_ERROR":
-                    good = False
-                    note = "ThaiLLM upstream unavailable"
                 latency = int(r.latency_ms or ((time.perf_counter() - started) * 1000))
-                status = r.status
-                has_evidence = bool(r.evidence)
+                status, has_evidence = r.status, bool(r.evidence)
             except Exception as one:
-                good = False
-                note = clean_error(one)
+                good, note = False, clean_error(one)
                 latency = int((time.perf_counter() - started) * 1000)
-                status = "ERROR"
-                has_evidence = False
-                errors += 1
+                status, has_evidence, errors = "ERROR", False, errors + 1
 
             passed += int(good)
             if kind == "blocked":
-                sec_t += 1
-                sec_p += int(good)
-                cat = "Prompt Injection"
+                sec_t += 1; sec_p += int(good); cat = "Prompt Injection"
             elif kind == "out_of_scope":
-                scope_t += 1
-                scope_p += int(good)
-                cat = "Out-of-scope Detection"
+                scope_t += 1; scope_p += int(good); cat = "Out-of-scope Detection"
             else:
-                ground_t += 1
-                ground_e += int(has_evidence)
-                cat = "Curriculum QA"
+                ground_t += 1; ground_e += int(has_evidence); cat = "Curriculum QA"
 
-            rows.append(
-                {
-                    "id": str(item["id"]),
-                    "category": cat,
-                    "question": item["question"],
-                    "groundTruth": ", ".join(spec.get("must_contain", [])) or kind,
-                    "expectedBehavior": kind,
-                    "score": 100 if good else 0,
-                    "latencyMs": latency,
-                    "passed": bool(good),
-                    "status": status,
-                    "note": note,
-                }
-            )
+            rows.append({
+                "id": str(item["id"]), "category": cat, "question": item["question"],
+                "groundTruth": ", ".join(spec.get("must_contain", [])) or kind,
+                "expectedBehavior": kind, "score": 100 if good else 0, "latencyMs": latency,
+                "passed": bool(good), "status": status, "note": note,
+            })
 
         total = len(rows)
         payload = {
-            "total": total,
-            "passed": passed,
-            "failed": total - passed,
+            "total": total, "passed": passed, "failed": total - passed,
             "passRate": passed / total if total else 0,
             "evidenceCoverage": ground_e / ground_t if ground_t else 0,
             "scopeHandling": scope_p / scope_t if scope_t else 0,
             "injectionBlock": sec_p / sec_t if sec_t else 0,
-            "rows": rows,
-            "errors": errors,
-            "degraded": errors > 0,
-            "cacheHit": False,
+            "rows": rows, "errors": errors, "degraded": errors > 0,
+            "cacheHit": False, "modelDisplay": MODEL_DISPLAY,
         }
-        BENCHMARK_CACHE = payload
-        BENCHMARK_CACHE_AT = time.monotonic()
+        if not custom_key:
+            BENCHMARK_CACHE, BENCHMARK_CACHE_AT = payload, time.monotonic()
         return JSONResponse(payload)
     except Exception as e:
-        return JSONResponse(
-            {
-                "total": 0,
-                "passed": 0,
-                "failed": 0,
-                "passRate": 0,
-                "evidenceCoverage": 0,
-                "scopeHandling": 0,
-                "injectionBlock": 0,
-                "rows": [],
-                "errors": 1,
-                "degraded": True,
-                "error": "Benchmark service is temporarily degraded",
-                "detail": clean_error(e),
-            },
-            status_code=200,
-        )
+        return JSONResponse({
+            "total": 0, "passed": 0, "failed": 0, "passRate": 0,
+            "evidenceCoverage": 0, "scopeHandling": 0, "injectionBlock": 0,
+            "rows": [], "errors": 1, "degraded": True,
+            "error": "Benchmark service is temporarily degraded", "detail": clean_error(e),
+        }, status_code=200)
 
 
 routes = [
-    Route("/", root),
-    Route("/favicon.ico", favicon),
-    Route("/healthz", healthz),
-    Route("/api/health", api_health),
-    Route("/api/programs", api_programs),
+    Route("/", root), Route("/favicon.ico", favicon), Route("/healthz", healthz),
+    Route("/api/health", api_health), Route("/api/programs", api_programs),
     Route("/api/ask", api_ask, methods=["POST"]),
     Route("/api/compare", api_compare, methods=["POST"]),
+    Route("/api/import-questions", api_import_questions, methods=["POST"]),
+    Route("/api/run-batch", api_run_batch, methods=["POST"]),
     Route("/api/benchmark", api_benchmark, methods=["POST"]),
 ]
 app = Starlette(routes=routes, debug=False)
