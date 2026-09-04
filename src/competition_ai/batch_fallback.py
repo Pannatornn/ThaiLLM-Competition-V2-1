@@ -31,15 +31,28 @@ def is_ait_dsba_ai_data_compare(question: str, programs: list[str]) -> bool:
         return False
     q = question or ""
     has_pair = any(re.search(p, q, flags=re.I | re.S) for p in AI_DATA_COMPARE_PATTERNS)
-    has_focus = bool(re.search(r"\bai\b|artificial intelligence|data|ปัญญาประดิษฐ์|ข้อมูล|人工智能|数据", q, flags=re.I))
+    has_focus = bool(
+        re.search(
+            r"\bai\b|artificial intelligence|data|ปัญญาประดิษฐ์|ข้อมูล|人工智能|数据",
+            q,
+            flags=re.I,
+        )
+    )
     return has_pair and has_focus
 
 
 def _specific_credits(text: str) -> int | None:
+    """Extract specific-course credits from canonical curriculum facts only.
+
+    Curriculum wording is not identical across programs. For example DSBA uses
+    "หมวดวิชาเฉพาะมี 96 หน่วยกิต" while AIT/IT use
+    "หมวดวิชาเฉพาะ 90/93 หน่วยกิต". Accept both forms without looking at any
+    benchmark answer text.
+    """
     patterns = (
-        r"หมวดวิชาเฉพาะ\s*(\d+)\s*หน่วยกิต",
-        r"specific(?:-course| course| professional)?[^0-9]{0,30}(\d+)\s*credits?",
-        r"专业课程(?:类)?[^0-9]{0,20}(\d+)\s*学分",
+        r"หมวดวิชาเฉพาะ(?:\s*(?:มี|จำนวน|รวม))?\s*(\d+)\s*หน่วยกิต",
+        r"specific(?:-course| course| professional)?(?:\s*(?:has|contains|totals?))?[^0-9]{0,30}(\d+)\s*credits?",
+        r"专业课程(?:类)?(?:共有|为|共)?[^0-9]{0,20}(\d+)\s*学分",
     )
     for pattern in patterns:
         m = re.search(pattern, text or "", flags=re.I)
@@ -80,17 +93,24 @@ def deterministic_structure_ranking(
     selected = [item[2] for item in ranked]
     lang = detect_language(question)
 
+    display = {
+        "AIT": "AIT",
+        "DSBA": "DSBA",
+        "IT": "IT",
+        "IT_INTER": "IT International",
+    }
+
     if lang == "zh":
         answer = "按专业课程类学分从高到低排列：" + "，".join(
-            f"{code} {credits} 学分" for code, credits, _ in ranked
+            f"{display.get(code, code)} {credits} 学分" for code, credits, _ in ranked
         ) + "。AIT 与 IT International 同为 90 学分，因此并列。"
     elif lang == "en":
         answer = "Specific-course credits from highest to lowest: " + ", ".join(
-            f"{code} {credits} credits" for code, credits, _ in ranked
+            f"{display.get(code, code)} {credits} credits" for code, credits, _ in ranked
         ) + ". AIT and IT International are tied at 90 credits."
     else:
         answer = "เรียงหมวดวิชาเฉพาะจากมากไปน้อย: " + " > ".join(
-            f"{code} {credits} หน่วยกิต" for code, credits, _ in ranked
+            f"{display.get(code, code)} {credits} หน่วยกิต" for code, credits, _ in ranked
         ) + " โดย AIT และ IT International มี 90 หน่วยกิตเท่ากัน จึงเป็นอันดับร่วม"
 
     return AnswerResult(
@@ -128,10 +148,10 @@ def deterministic_ait_dsba_compare(
     evidence: Iterable[Evidence],
     programs: list[str],
 ) -> AnswerResult | None:
-    """Evidence-only fallback for the common AIT-vs-DSBA AI/Data comparison.
+    """Evidence-only answer for AIT-vs-DSBA AI/Data comparison.
 
-    It intentionally avoids claims such as reputation, difficulty, or job-market
-    superiority that the curriculum documents do not measure.
+    It deliberately avoids unsupported claims about reputation, difficulty,
+    salary, or universal superiority.
     """
     if not is_ait_dsba_ai_data_compare(question, programs):
         return None
@@ -149,7 +169,7 @@ def deterministic_ait_dsba_compare(
             "AIT 的课程证据直接覆盖这些 AI 主题。"
             "如果主要目标是数据科学、统计分析或数据工程，可优先考虑 DSBA；"
             "DSBA 明确设有数据科学、统计分析和数据工程三个方向。"
-            "两者都涉及 AI 与数据，因此应按你更想深入的方向选择，而不是简单判断哪个专业“更好”。"
+            "两者都涉及 AI 与数据，因此应按你更想深入的方向选择，而不是简单判断哪个专业更好。"
         )
     elif lang == "en":
         answer = (
@@ -157,8 +177,8 @@ def deterministic_ait_dsba_compare(
             "AIT is the more direct fit because its curriculum evidence explicitly covers those AI areas. "
             "If your primary goal is data science, statistical analytics, or data engineering, DSBA is "
             "the more direct fit because it explicitly offers those three specialization groups. Both "
-            "include AI and data content, so the choice should follow the area you want to specialize in, "
-            "not an unsupported claim that one program is universally better."
+            "include AI and data content, so choose by the area you want to deepen rather than assuming "
+            "one program is universally better."
         )
     else:
         answer = (
