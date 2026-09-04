@@ -16,8 +16,9 @@ class ResilientCompetitionPipeline(PolicyCompetitionPipeline):
     def ask(self, question: str, forced_program: str | None = None):
         question = (question or "").strip()
 
-        # Aggregate specific-course-credit ranking is fully supported by
-        # canonical evidence and should never depend on an upstream LLM call.
+        # Aggregate specific-course-credit ranking is completely supported by
+        # canonical curriculum facts. Use the deterministic path first so this
+        # answer cannot become blank or gain unsupported extra course claims.
         if is_all_program_question(question):
             ranked = deterministic_structure_ranking(
                 question,
@@ -33,27 +34,31 @@ class ResilientCompetitionPipeline(PolicyCompetitionPipeline):
             forced_program=forced_program,
         )
 
-        # The AIT-vs-DSBA AI/Data decision case has a deterministic evidence-only
-        # fallback. Try the normal ThaiLLM compare path first, but never return an
-        # empty row if the upstream endpoint fails.
+        # The recurring AIT-vs-DSBA AI/Data decision question is also fully
+        # answerable from canonical evidence. Prefer this deterministic path
+        # over free-form generation to avoid upstream failures and unsupported
+        # recommendations in competition CSV output.
         if route.comparison and len(route.programs) >= 2:
+            fallback = deterministic_ait_dsba_compare(
+                question,
+                self.evidence,
+                route.programs,
+            )
+            if fallback is not None:
+                return fallback
+
             try:
-                return super().ask(question, forced_program=forced_program)
+                result = super().ask(question, forced_program=forced_program)
+                if not str(getattr(result, "answer", "") or "").strip():
+                    return nonempty_error_result(question, "empty comparison answer")
+                return result
             except Exception as exc:
-                fallback = deterministic_ait_dsba_compare(
-                    question,
-                    self.evidence,
-                    route.programs,
-                )
-                if fallback is not None:
-                    fallback.debug = {
-                        **(fallback.debug or {}),
-                        "upstream_error": str(exc),
-                    }
-                    return fallback
                 return nonempty_error_result(question, str(exc))
 
         try:
-            return super().ask(question, forced_program=forced_program)
+            result = super().ask(question, forced_program=forced_program)
+            if not str(getattr(result, "answer", "") or "").strip():
+                return nonempty_error_result(question, "empty answer")
+            return result
         except Exception as exc:
             return nonempty_error_result(question, str(exc))
