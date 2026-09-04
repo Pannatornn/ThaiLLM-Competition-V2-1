@@ -38,9 +38,6 @@ def _alias_hit(question: str, alias: str) -> bool:
     return a in q
 
 
-# Explicit program-code recognizers are intentionally checked before generic
-# aliases. This prevents a core competition case such as "หลักสูตร IT ปี 2565"
-# from ever falling through to NEEDS_CONTEXT.
 _EXPLICIT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "IT_INTER",
@@ -72,8 +69,11 @@ _EXPLICIT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "IT",
         (
+            # Organizer benchmark uses the compact token IT2565 in both Thai
+            # and Chinese questions. Match it before the plain IT boundary rule.
+            r"(?<![A-Za-z0-9_])it[\s_-]*2565(?![A-Za-z0-9_])",
             r"(?<![A-Za-z0-9_])it(?![A-Za-z0-9_])",
-            r"หลักสูตร\s*it(?:\s|$)",
+            r"หลักสูตร\s*it(?:[\s_-]*2565)?(?:\s|$)",
             r"สาขาวิชาเทคโนโลยีสารสนเทศ",
             r"bachelor\s+of\s+science\s+program\s+in\s+information\s+technology",
         ),
@@ -89,18 +89,15 @@ def detect_programs(question: str, catalog: dict) -> list[str]:
         if any(re.search(p, q, flags=re.I) for p in patterns):
             hits.append(code)
 
-    # Catalog aliases cover official names and future aliases without requiring
-    # router code changes.
     for code in ("IT_INTER", "AIT", "DSBA", "IT"):
         if code in hits or code not in catalog:
             continue
         if any(_alias_hit(q, alias) for alias in catalog[code].get("aliases", [])):
             hits.append(code)
 
-    # "IT Inter" contains the letters IT, but must route to IT_INTER only.
     if "IT_INTER" in hits and "IT" in hits:
         explicit_plain_it = bool(
-            re.search(r"(?<![A-Za-z0-9_])it(?![A-Za-z0-9_])", q)
+            re.search(r"(?<![A-Za-z0-9_])it(?:[\s_-]*2565)?(?![A-Za-z0-9_])", q)
             and not re.search(
                 r"(?<![A-Za-z0-9_])it[\s_-]*(?:inter|international)(?![A-Za-z0-9_])",
                 q,
@@ -120,10 +117,7 @@ def route_question(
     available_programs: list[str] | None = None,
 ) -> RouteResult:
     if forced_program and forced_program != "AUTO":
-        return RouteResult(
-            [forced_program],
-            reason="ผู้ใช้กำหนดบริบทหลักสูตร",
-        )
+        return RouteResult([forced_program], reason="ผู้ใช้กำหนดบริบทหลักสูตร")
 
     hits = detect_programs(question, catalog)
 
@@ -145,10 +139,7 @@ def route_question(
     available = available_programs or list(catalog.keys())
 
     if len(available) == 1:
-        return RouteResult(
-            available,
-            reason="มีหลักสูตรเดียวในบริบท",
-        )
+        return RouteResult(available, reason="มีหลักสูตรเดียวในบริบท")
 
     if comparison:
         return RouteResult(
