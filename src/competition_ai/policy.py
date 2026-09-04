@@ -3,6 +3,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+try:
+    from langdetect import detect as _langdetect
+except Exception:  # pragma: no cover - deterministic fallback remains available
+    _langdetect = None
+
 
 SUPPORTED_PROGRAMS = ("AIT", "DSBA", "IT", "IT_INTER")
 
@@ -18,54 +23,41 @@ DOMAIN_HINTS = (
 
 GREETING_PATTERNS = (
     r"^\s*(สวัสดี|หวัดดี|ดีครับ|ดีค่ะ|hello|hi|hey|你好|您好|哈喽)\b",
-    r"^\s*(good\s+(morning|afternoon|evening))\b",
+    r"^\s*good\s+(morning|afternoon|evening)\b",
 )
 
 INJECTION_PATTERNS = (
     r"ignore\s+(all\s+)?previous\s+instructions",
     r"ignore\s+the\s+instructions",
-    r"system\s+prompt",
-    r"developer\s+message",
-    r"reveal\s+.*instructions",
-    r"show\s+.*prompt",
-    r"jailbreak",
+    r"system\s+prompt", r"developer\s+message",
+    r"reveal\s+.*instructions", r"show\s+.*prompt", r"jailbreak",
     r"\bdan\b.*(mode|jailbreak|anything)",
-    r"ลืมคำสั่งเดิม",
-    r"ไม่ต้องทำตามคำสั่ง",
-    r"บอก.*คำสั่ง.*ระบบ",
-    r"เปิดเผย.*prompt",
-    r"เปิดเผย.*system",
-    r"คำสั่งที่ซ่อน",
+    r"ลืมคำสั่งเดิม", r"ไม่ต้องทำตามคำสั่ง", r"บอก.*คำสั่ง.*ระบบ",
+    r"เปิดเผย.*prompt", r"เปิดเผย.*system", r"คำสั่งที่ซ่อน",
     r"(print|show|dump|export|reveal).*(context|knowledge\s*base|database|documents?|evidence)",
     r"(แสดง|พิมพ์|ส่ง|เปิดเผย).*(context|knowledge\s*base|ฐานความรู้|เอกสารทั้งหมด|ข้อมูลทั้งหมด)",
 )
 
 UNSAFE_MIXED_PATTERNS = (
-    r"brute[\s-]*force",
-    r"password\s*(crack|guess|attack)",
-    r"ขโมยรหัส",
-    r"เดารหัสผ่าน",
-    r"เจาะรหัสผ่าน",
+    r"brute[\s-]*force", r"password\s*(crack|guess|attack)",
+    r"ขโมยรหัส", r"เดารหัสผ่าน", r"เจาะรหัสผ่าน",
 )
 
 OTHER_UNIVERSITY_PATTERNS = (
-    r"จุฬา", r"chulalongkorn",
-    r"มหิดล", r"mahidol",
-    r"ธรรมศาสตร์", r"thammasat",
-    r"เกษตรศาสตร์", r"kasetsart",
+    r"จุฬา", r"chulalongkorn", r"มหิดล", r"mahidol",
+    r"ธรรมศาสตร์", r"thammasat", r"เกษตรศาสตร์", r"kasetsart",
     r"เชียงใหม่", r"chiang mai university",
 )
 
 GENERAL_OOS_PATTERNS = (
     r"ต้มยำ", r"สูตรอาหาร", r"พยากรณ์อากาศ", r"อากาศ.*กรุงเทพ",
     r"weather", r"ฟุตบอล", r"พรีเมียร์ลีก", r"หวย", r"bitcoin",
-    r"หุ้น", r"ลดน้ำหนัก", r"กิโล", r"1\s*\+\s*1",
+    r"หุ้น", r"ลดน้ำหนัก", r"1\s*\+\s*1",
 )
 
 NOT_FOUND_PATTERNS = (
     r"(ค่าเทอม|ค่าธรรมเนียมการศึกษา).*(ต่อภาค|ต่อเทอม|ราคาจริง)",
-    r"(tuition|semester fee|term fee)",
-    r"(学费|每学期费用)",
+    r"(tuition|semester fee|term fee)", r"(学费|每学期费用)",
 )
 
 SUBJECTIVE_EXTERNAL_COMPARE_PATTERNS = (
@@ -82,18 +74,47 @@ class PolicyDecision:
 
 
 def detect_language(text: str) -> str:
-    text = text or ""
-    thai = len(re.findall(r"[\u0E00-\u0E7F]", text))
-    cjk = len(re.findall(r"[\u4E00-\u9FFF]", text))
-    latin = len(re.findall(r"[A-Za-z]", text))
+    """Return an ISO-like language tag from the actual question text.
 
-    if cjk > max(thai, latin // 2):
-        return "zh"
-    if thai > max(cjk, latin // 3):
+    Deterministic script checks protect the competition's Thai/Chinese cases.
+    langdetect expands coverage to English, Japanese, Korean, Arabic, Russian,
+    Spanish, French and other languages so answer-language policy is not tied
+    to the TH/EN UI toggle.
+    """
+    text = (text or "").strip()
+    if not text:
         return "th"
-    if latin:
-        return "en"
-    return "th"
+
+    thai = len(re.findall(r"[\u0E00-\u0E7F]", text))
+    han = len(re.findall(r"[\u4E00-\u9FFF]", text))
+    kana = len(re.findall(r"[\u3040-\u30FF]", text))
+    hangul = len(re.findall(r"[\uAC00-\uD7AF]", text))
+    arabic = len(re.findall(r"[\u0600-\u06FF]", text))
+    cyrillic = len(re.findall(r"[\u0400-\u04FF]", text))
+
+    if thai >= 2:
+        return "th"
+    if kana >= 2:
+        return "ja"
+    if hangul >= 2:
+        return "ko"
+    if han >= 2:
+        return "zh"
+    if arabic >= 2:
+        return "ar"
+    if cyrillic >= 2 and _langdetect is None:
+        return "ru"
+
+    if _langdetect is not None and len(text) >= 4:
+        try:
+            lang = (_langdetect(text) or "en").casefold()
+            if lang.startswith("zh"):
+                return "zh"
+            return lang
+        except Exception:
+            pass
+
+    return "en" if re.search(r"[A-Za-z]", text) else "th"
 
 
 def has_domain_hint(text: str) -> bool:
@@ -102,25 +123,20 @@ def has_domain_hint(text: str) -> bool:
 
 
 def is_greeting(text: str) -> bool:
-    q = (text or "").strip()
-    return any(re.search(p, q, flags=re.I) for p in GREETING_PATTERNS)
+    return any(re.search(p, text or "", flags=re.I) for p in GREETING_PATTERNS)
 
 
 def is_prompt_injection(text: str) -> bool:
-    q = text or ""
-    return any(re.search(p, q, flags=re.I | re.S) for p in INJECTION_PATTERNS)
+    return any(re.search(p, text or "", flags=re.I | re.S) for p in INJECTION_PATTERNS)
 
 
 def has_unsafe_mixed_intent(text: str) -> bool:
     q = text or ""
-    return has_domain_hint(q) and any(
-        re.search(p, q, flags=re.I | re.S) for p in UNSAFE_MIXED_PATTERNS
-    )
+    return has_domain_hint(q) and any(re.search(p, q, flags=re.I | re.S) for p in UNSAFE_MIXED_PATTERNS)
 
 
 def mentions_other_university(text: str) -> bool:
-    q = text or ""
-    return any(re.search(p, q, flags=re.I) for p in OTHER_UNIVERSITY_PATTERNS)
+    return any(re.search(p, text or "", flags=re.I) for p in OTHER_UNIVERSITY_PATTERNS)
 
 
 def is_general_out_of_scope(text: str) -> bool:
@@ -131,22 +147,19 @@ def is_general_out_of_scope(text: str) -> bool:
 
 
 def is_known_not_found_request(text: str) -> bool:
-    q = text or ""
-    return any(re.search(p, q, flags=re.I) for p in NOT_FOUND_PATTERNS)
+    return any(re.search(p, text or "", flags=re.I) for p in NOT_FOUND_PATTERNS)
 
 
 def is_subjective_external_compare(text: str) -> bool:
     q = text or ""
-    return has_domain_hint(q) and any(
-        re.search(p, q, flags=re.I) for p in SUBJECTIVE_EXTERNAL_COMPARE_PATTERNS
-    )
+    return has_domain_hint(q) and any(re.search(p, q, flags=re.I) for p in SUBJECTIVE_EXTERNAL_COMPARE_PATTERNS)
 
 
 _TEXTS = {
     "th": {
         "empty": "กรุณาพิมพ์คำถาม",
         "blocked": "คำขอนี้พยายามเปลี่ยน เปิดเผย หรือดึงข้อมูลภายในของระบบ จึงไม่ดำเนินการต่อ คุณสามารถถามข้อมูลหลักสูตร AIT, DSBA, IT และ IT International ของคณะเทคโนโลยีสารสนเทศ สจล. ได้",
-        "partial_blocked": "ช่วยได้เฉพาะส่วนที่เกี่ยวกับหลักสูตร AIT, DSBA, IT และ IT International ของคณะเทคโนโลยีสารสนเทศ สจล. ส่วนคำขอที่เกี่ยวกับการเจาะหรือเดารหัสผ่านจะไม่ดำเนินการ หากต้องการข้อมูลหลักสูตร โปรดระบุหัวข้อ เช่น หน่วยกิต รายวิชา หรืออาชีพ",
+        "partial_blocked": "ช่วยได้เฉพาะส่วนที่เกี่ยวกับหลักสูตร AIT, DSBA, IT และ IT International ส่วนคำขอที่เกี่ยวกับการเจาะหรือเดารหัสผ่านจะไม่ดำเนินการ กรุณาระบุหัวข้อหลักสูตรที่ต้องการ เช่น หน่วยกิต รายวิชา หรืออาชีพ",
         "oos": "คำถามนี้อยู่นอกขอบเขตของ IT KMITL Curriculum Chatbot ระบบนี้ตอบข้อมูลหลักสูตร AIT, DSBA, IT และ IT International ของคณะเทคโนโลยีสารสนเทศ สจล. จากชุดข้อมูลที่ผู้จัดกำหนด",
         "greeting": "สวัสดีครับ พร้อมช่วยตอบข้อมูลหลักสูตรของคณะเทคโนโลยีสารสนเทศ สจล. ได้แก่ AIT, DSBA, IT และ IT International ถามเรื่องหน่วยกิต รายวิชา โครงสร้างหลักสูตร ทักษะ หรืออาชีพได้เลย",
         "not_found": "คำถามนี้เกี่ยวข้องกับคณะเทคโนโลยีสารสนเทศ สจล. แต่ไม่พบหลักฐานที่เพียงพอในชุดข้อมูลที่ผู้จัดกำหนด จึงไม่ควรเดาหรือใช้ข้อมูลภายนอก",
@@ -177,13 +190,11 @@ _TEXTS = {
 
 
 def message(language: str, key: str) -> str:
-    lang = language if language in _TEXTS else "en"
-    return _TEXTS[lang][key]
+    return _TEXTS.get(language, _TEXTS["en"])[key]
 
 
 def classify_pre_route(question: str) -> PolicyDecision | None:
     lang = detect_language(question)
-
     if not (question or "").strip():
         return PolicyDecision(lang, "EMPTY", "empty input")
     if is_prompt_injection(question):
