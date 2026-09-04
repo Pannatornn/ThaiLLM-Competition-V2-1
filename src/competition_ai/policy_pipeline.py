@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .hard_policy import classify_hard_edge, is_all_program_question
 from .models import AnswerResult
 from .pipeline import CompetitionPipeline, render_evidence
 from .policy import classify_pre_route, detect_language, has_domain_hint, message
@@ -17,6 +18,8 @@ PROGRAM_LIST_PATTERNS = (
     r"有哪些.*(专业|课程)",
     r"信息技术学院.*(专业|课程).*哪些",
 )
+
+ALL_PROGRAMS = ["AIT", "DSBA", "IT", "IT_INTER"]
 
 
 class PolicyCompetitionPipeline(CompetitionPipeline):
@@ -87,14 +90,22 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         return AnswerResult(
             status="SUPPORTED",
             answer=text,
-            programs=["AIT", "DSBA", "IT", "IT_INTER"],
+            programs=ALL_PROGRAMS.copy(),
             debug={"policy_reason": "program list overview", "language": lang},
         )
 
     def _ensure_answer_language(self, question: str, result: AnswerResult) -> AnswerResult:
         """Enforce: question language == answer language, independent of the UI language toggle."""
         target = detect_language(question)
-        if result.status in {"EMPTY", "BLOCKED", "PARTIAL_BLOCKED", "GREETING", "OUT_OF_SCOPE", "NOT_FOUND", "NEEDS_CONTEXT"}:
+        if result.status in {
+            "EMPTY",
+            "BLOCKED",
+            "PARTIAL_BLOCKED",
+            "GREETING",
+            "OUT_OF_SCOPE",
+            "NOT_FOUND",
+            "NEEDS_CONTEXT",
+        }:
             return result
         if not result.answer:
             return result
@@ -144,16 +155,46 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         }
         return result
 
+    def _run_all_program_analysis(self, question: str) -> AnswerResult:
+        """Answer aggregate/ranking questions across all four curricula from one homepage query."""
+        result = self.compare(
+            question,
+            ALL_PROGRAMS.copy(),
+            question,
+        )
+        result.debug = {
+            **(result.debug or {}),
+            "universal_entry": True,
+            "auto_all_programs": True,
+            "language": detect_language(question),
+        }
+        return self._ensure_answer_language(question, result)
+
     def ask(self, question: str, forced_program: str | None = None) -> AnswerResult:
         question = (question or "").strip()
+
+        # Hard-level edge policy runs before the general policy so encoded
+        # injections and dataset-missing current information cannot reach RAG.
+        hard_decision = classify_hard_edge(question)
+        if hard_decision is not None:
+            return self._policy_result(
+                question,
+                hard_decision.kind,
+                hard_decision.reason,
+            )
 
         decision = classify_pre_route(question)
         if decision is not None:
             return self._policy_result(question, decision.kind, decision.reason)
 
+        # Universal first page also accepts aggregate questions such as
+        # "each curriculum", "all four programs" and Chinese equivalents.
+        if is_all_program_question(question):
+            return self._run_all_program_analysis(question)
+
         route = route_question(question, self.catalog, forced_program=forced_program)
 
-        # Universal first page: comparisons are auto-routed; no need to open Compare tab.
+        # Comparisons are auto-routed; the user does not need to open Compare tab.
         if route.comparison and len(route.programs) >= 2:
             result = self.compare(question, route.programs, question)
             result.debug = {
@@ -164,7 +205,7 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
             }
             return self._ensure_answer_language(question, result)
 
-        # Broad in-domain overview questions are also valid on the first page.
+        # Broad in-domain overview questions are valid on the first page.
         if not route.programs and route.ambiguous:
             if self._is_program_list_question(question):
                 return self._program_list_answer(question)
