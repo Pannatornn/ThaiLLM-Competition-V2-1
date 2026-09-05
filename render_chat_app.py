@@ -11,6 +11,7 @@ from starlette.routing import Route
 import render_app_v2 as legacy
 import render_server as core
 from chat_ui import render_chat_ui
+from chat_ui_finish_patch import inject_final_ui_patch
 from chat_ui_patch import inject_chat_runtime_patch
 from competition_ai.router import route_question
 
@@ -52,6 +53,7 @@ def _recent_user_programs(history: list[dict]) -> list[str]:
 
 async def root(_: Request):
     html = inject_chat_runtime_patch(render_chat_ui(chat_config()))
+    html = inject_final_ui_patch(html)
     return HTMLResponse(
         html,
         headers={
