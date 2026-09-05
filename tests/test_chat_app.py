@@ -9,27 +9,52 @@ from chat_ui_patch import inject_chat_runtime_patch
 from render_chat_app import _recent_user_programs
 
 
-def test_chat_ui_contains_history_auth_and_chat_controls():
-    html = render_chat_ui(
-        {
-            "supabaseUrl": "https://example.supabase.co",
-            "supabaseAnonKey": "public-anon-key",
-            "authConfigured": True,
-            "modelDisplay": "OpenThaiGPT-ThaiLLM-8B-Instruct-v7.2",
-        }
+def rendered_chat() -> str:
+    return inject_chat_runtime_patch(
+        render_chat_ui(
+            {
+                "supabaseUrl": "https://example.supabase.co",
+                "supabaseAnonKey": "public-anon-key",
+                "authConfigured": True,
+                "modelDisplay": "OpenThaiGPT-ThaiLLM-8B-Instruct-v7.2",
+            }
+        )
     )
-    assert "แชทใหม่" in html
-    assert "ค้นหาแชท" in html
-    assert "Sign in" in html
+
+
+def test_chat_ui_is_english_first_with_history_and_chat_controls():
+    html = rendered_chat()
+    assert '<html lang="en">' in html
+    assert "New chat" in html
+    assert "Search chats" in html
+    assert "Sign in to ThaiLLM" in html
     assert "Create account" in html
+    assert "Competition tools" in html
     assert "conversationTitle" in html
     assert "messages" in html
     assert "question,answer" in html
     assert "__CHAT_CONFIG__" not in html
 
 
+def test_google_oauth_button_and_flow_are_present():
+    html = rendered_chat()
+    assert "Continue with Google" in html
+    assert "signInWithOAuth" in html
+    assert "provider:'google'" in html
+    assert "redirectTo:window.location.origin+'/'" in html
+
+
+def test_legacy_academic_intelligence_theme_is_applied():
+    html = rendered_chat()
+    assert "legacyChatTheme" in html
+    assert "--bg:#07101d" in html
+    assert "--accent:#6366f1" in html
+    assert "--teal:#14b8a6" in html
+    assert "Academic</span> <span class=\"brand-teal\">Intelligence" in html
+
+
 def test_chat_runtime_patch_enables_contextual_endpoint():
-    html = inject_chat_runtime_patch(render_chat_ui({}))
+    html = rendered_chat()
     assert "'/api/chat'" in html
     assert "messages=[...(c.messages||[])]" in html
     assert "contextualized" in html
