@@ -13,11 +13,23 @@ import render_server as core
 from chat_ui import render_chat_ui
 from chat_ui_finish_patch import inject_final_ui_patch
 from chat_ui_patch import inject_chat_runtime_patch
+from competition_ai.policy import detect_language
 from competition_ai.router import route_question
 
 
 FOLLOWUP_COMPARE_RE = re.compile(
     r"เปรียบ|เทียบ|ต่าง|อันไหน|มากกว่า|น้อยกว่า|compare|difference|which|better|more|less|比较|区别|哪个|更多|更少",
+    re.I,
+)
+
+RETRY_REFERENCE_RE = re.compile(
+    r"^\s*(?:"
+    r"เช็ค(?:ดู)?(?:ดิ|สิ|หน่อย)?|เช็ก(?:ดู)?(?:ดิ|สิ|หน่อย)?|"
+    r"ลองเช็ค(?:ดู)?|ลองเช็ก(?:ดู)?|ตรวจ(?:ดู)?(?:ดิ|สิ|หน่อย)?|"
+    r"ดูอีกที|ลองใหม่|ตอบใหม่|"
+    r"check(?:\s+it)?(?:\s+again)?|recheck|try\s+again|look\s+again|"
+    r"再查一下|再看看|检查一下"
+    r")\s*[!?…。]*\s*$",
     re.I,
 )
 
@@ -49,6 +61,46 @@ def _recent_user_programs(history: list[dict]) -> list[str]:
         if routed.programs:
             return list(dict.fromkeys(routed.programs))
     return []
+
+
+def _latest_user_question(history: list[dict]) -> str:
+    for item in reversed(history[-10:]):
+        if str(item.get("role", "")).casefold() != "user":
+            continue
+        text = str(item.get("content", "")).strip()
+        if text:
+            return text
+    return ""
+
+
+def _contextual_retry_question(question: str, history: list[dict]) -> str | None:
+    """Turn vague retry turns such as 'เช็คดูดิ' into a grounded re-check.
+
+    Only prior *user* text is reused. Assistant text is never copied into the
+    effective query, preventing model output from becoming routing authority.
+    """
+    if not RETRY_REFERENCE_RE.search(question or ""):
+        return None
+    previous = _latest_user_question(history)
+    if not previous:
+        return None
+
+    lang = detect_language(question)
+    if lang == "th":
+        return f"โปรดตรวจสอบคำถามก่อนหน้านี้อีกครั้งและตอบเป็นภาษาไทย: {previous}"
+    if lang == "zh":
+        return f"请重新检查上一个问题，并用中文回答：{previous}"
+    return f"Please re-check the previous question and answer in English: {previous}"
+
+
+def _program_context_question(question: str, program: str) -> str:
+    """Make short follow-ups pass pre-route scope checks without changing intent."""
+    lang = detect_language(question)
+    if lang == "th":
+        return f"ในบริบทหลักสูตร {program}: {question}"
+    if lang == "zh":
+        return f"关于 {program} 课程：{question}"
+    return f"In the {program} curriculum context: {question}"
 
 
 async def root(_: Request):
@@ -88,21 +140,28 @@ async def api_chat(req: Request):
         history = [x for x in history[-10:] if isinstance(x, dict)]
 
         pipeline = legacy.resilient_pipe(req)
-        current_route = route_question(question, core.CATALOG)
-        contextualized = False
+        retry_question = _contextual_retry_question(question, history)
+        effective_question = retry_question or question
+        current_route = route_question(effective_question, core.CATALOG)
+        contextualized = bool(retry_question)
 
         if current_route.programs or not current_route.ambiguous:
-            result = pipeline.ask(question)
+            result = pipeline.ask(effective_question)
+            if contextualized:
+                result = pipeline._ensure_answer_language(question, result)
         else:
             recent_programs = _recent_user_programs(history)
             if len(recent_programs) == 1:
                 # Example: "AIT เรียนอะไรบ้าง" -> "แล้วเรียนกี่ปี?"
-                result = pipeline.ask(question, forced_program=recent_programs[0])
+                contextual_question = _program_context_question(question, recent_programs[0])
+                result = pipeline.ask(contextual_question)
+                result = pipeline._ensure_answer_language(question, result)
                 contextualized = True
             elif len(recent_programs) >= 2 and FOLLOWUP_COMPARE_RE.search(question):
                 # Example: "AIT กับ DSBA ต่างกันยังไง" -> "แล้วอันไหนหน่วยกิตมากกว่า?"
                 programs = recent_programs[:2]
-                result = pipeline.compare(question, programs, question)
+                compare_query = f"{programs[0]} vs {programs[1]}: {question}"
+                result = pipeline.compare(compare_query, programs, compare_query)
                 result = pipeline._ensure_answer_language(question, result)
                 contextualized = True
             else:
