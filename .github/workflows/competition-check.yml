@@ -7,6 +7,7 @@ on:
       - final-competition-policy
       - hard-hackathon-10
       - grading-feedback-fix
+      - chatgpt-style-auth-history
   pull_request:
     branches:
       - main
@@ -32,6 +33,9 @@ jobs:
             render_server.py \
             render_app.py \
             render_app_v2.py \
+            render_chat_app.py \
+            chat_ui.py \
+            chat_ui_patch.py \
             src/competition_ai/policy.py \
             src/competition_ai/grading_policy.py \
             src/competition_ai/hard_policy.py \

@@ -5,7 +5,7 @@ services:
     plan: free
     region: singapore
     buildCommand: pip install -r requirements-render.txt
-    startCommand: uvicorn render_app_v2:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn render_chat_app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:
       - key: PYTHON_VERSION
@@ -48,3 +48,7 @@ services:
         value: "30"
       - key: BENCHMARK_COOLDOWN_SECONDS
         value: "60"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
