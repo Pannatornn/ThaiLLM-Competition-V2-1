@@ -1,11 +1,12 @@
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from chat_ui import render_chat_ui
 from chat_ui_patch import inject_chat_runtime_patch
 from render_chat_app import _recent_user_programs
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_chat_ui_contains_history_auth_and_chat_controls():
