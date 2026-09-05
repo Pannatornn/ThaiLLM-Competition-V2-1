@@ -35,6 +35,7 @@ jobs:
             render_app_v2.py \
             render_chat_app.py \
             chat_ui.py \
+            chat_ui_patch.py \
             src/competition_ai/policy.py \
             src/competition_ai/grading_policy.py \
             src/competition_ai/hard_policy.py \
